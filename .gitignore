@@ -1,0 +1,9 @@
+# Secrets: only the *.example file belongs in the repo
+*.env
+!*.env.example
+tokens.env
+
+# Backups and editor leftovers
+*.bak
+*~
+*.swp

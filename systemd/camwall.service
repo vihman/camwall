@@ -1,0 +1,19 @@
+[Unit]
+Description=Camera wall (2x2 UniFi Protect on KMS)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=camwall
+SupplementaryGroups=video render
+StateDirectory=camwall
+Environment=HOME=/var/lib/camwall
+EnvironmentFile=/etc/camwall/tokens.env
+ExecStart=/usr/local/bin/camwall
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

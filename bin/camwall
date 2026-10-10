@@ -1,0 +1,44 @@
+#!/bin/bash
+# camwall - 2x2 wall of UniFi Protect RTSPS streams on a Raspberry Pi 4 (KMS/DRM, no desktop).
+#
+# Each camera: ffmpeg (hardware HEVC decode, scale) -> raw I420 frames -> FIFO
+# All four:    GStreamer filesrc -> rawvideoparse -> compositor -> kmssink
+#
+# Runs the wall once and exits non-zero as soon as any camera feed or the
+# pipeline dies. The restart policy lives in camwall.service (Restart=always).
+#
+# Configuration comes from the environment (systemd EnvironmentFile):
+#   UNIFI_HOST         gateway name or IP that serves RTSPS on port 7441
+#   TOKEN1..TOKEN4     RTSPS stream tokens (the last path segment of the Protect URL)
+#   FPS                output frame rate per tile (default 15)
+
+HOST=${UNIFI_HOST:?UNIFI_HOST is not set (see /etc/camwall/tokens.env)}
+W=960; H=540; FPS=${FPS:-15}
+
+D=$(mktemp -d)
+trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$D"' EXIT
+trap 'exit 143' INT TERM
+
+pids=(); args=()
+for i in 0 1 2 3; do
+  t=TOKEN$((i+1))
+  : "${!t:?$t is not set (see /etc/camwall/tokens.env)}"
+  mkfifo "$D/c$i"
+  ffmpeg -nostdin -loglevel error -rtsp_transport tcp -hwaccel drm \
+    -i "rtsps://$HOST:7441/${!t}" -an \
+    -vf "fps=$FPS,scale=$W:$H:flags=fast_bilinear" -pix_fmt yuv420p -f rawvideo pipe:1 \
+    2> >(sed -u "s/^/cam$((i+1)): /" >&2) > "$D/c$i" &
+  pids+=($!)
+  args+=(filesrc "location=$D/c$i" ! rawvideoparse format=i420 width=$W height=$H framerate=$FPS/1 \
+         ! queue max-size-buffers=4 leaky=downstream ! "mix.sink_$i")
+done
+
+gst-launch-1.0 -e compositor name=mix \
+    sink_1::xpos=$W sink_2::ypos=$H sink_3::xpos=$W sink_3::ypos=$H \
+  ! video/x-raw,format=I420,width=1920,height=1080 ! kmssink driver-name=vc4 sync=false \
+  "${args[@]}" &
+gst=$!
+
+wait -n "${pids[@]}" "$gst"   # needs bash >= 5.1
+echo "a child exited (rc=$?), exiting so systemd restarts the wall" >&2
+exit 1
