@@ -15,7 +15,7 @@
 HOST=${UNIFI_HOST:?UNIFI_HOST is not set (see /etc/camwall/tokens.env)}
 W=960; H=540; FPS=${FPS:-15}
 
-D=$(mktemp -d)
+D=$(mktemp -d) || { echo "cannot create temporary directory" >&2; exit 1; }
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$D"' EXIT
 trap 'exit 143' INT TERM
 
@@ -23,7 +23,7 @@ pids=(); args=()
 for i in 0 1 2 3; do
   t=TOKEN$((i+1))
   : "${!t:?$t is not set (see /etc/camwall/tokens.env)}"
-  mkfifo "$D/c$i"
+  mkfifo "$D/c$i" || { echo "cannot create FIFO for cam$((i+1))" >&2; exit 1; }
   ffmpeg -nostdin -loglevel error -rtsp_transport tcp -hwaccel drm \
     -i "rtsps://$HOST:7441/${!t}" -an \
     -vf "fps=$FPS,scale=$W:$H:flags=fast_bilinear" -pix_fmt yuv420p -f rawvideo pipe:1 \

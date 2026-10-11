@@ -32,7 +32,7 @@ HDMI monitor
 | Cameras | UniFi G6 series (Bullet, Turret and Pro Turret models tested); all with Encoding set to Enhanced, all send H.265 on RTSP |
 | Gateway | UniFi Cloud Gateway running Protect, RTSPS on port 7441 |
 
-The script assumes H.265 streams (Protect's Enhanced encoding). H.264 streams were not tested.
+The default setup uses H.265 streams (Protect's Enhanced encoding). A mixed H.264/H.265 setup was also tested; H.264 decoding used software (see [Measurements](#measurements)).
 
 ## Repository layout
 
@@ -169,11 +169,13 @@ ffmpeg errors in the journal carry a `camN:` prefix, which tells you which camer
 
 ```bash
 sudo mkdir -p /etc/systemd/system/camwall.service.d
-printf '[Service]\nEnvironment=FPS=30\n' | sudo tee /etc/systemd/system/camwall.service.d/fps.conf >/dev/null
+printf '[Service]\nEnvironment=FPS=20\n' | sudo tee /etc/systemd/system/camwall.service.d/fps.conf >/dev/null
 sudo systemctl daemon-reload && sudo systemctl restart camwall
 ```
 
-Check that it took effect. The second command prints only the `fps=` part of each ffmpeg command line, so no token is shown; expect four identical lines:
+The default of 15 fps is the conservative choice. This example sets 20 fps, which was tested, but check load and latency on your own Pi. At 30 fps the reference Pi overloaded and the picture lagged (see [Measurements](#measurements)).
+
+Check that it took effect. The second command prints only the `fps=` part of each ffmpeg command line, so no token is shown; expect one line, `4 fps=20`. It checks every ffmpeg process on the machine, so the count assumes no other ffmpeg processes are running:
 
 ```bash
 systemctl show camwall -p Environment
@@ -193,7 +195,7 @@ The script runs the wall once and exits as soon as any ffmpeg process or the GSt
 
 | Symptom | Likely cause and check |
 |---|---|
-| Picture shows old timestamps, minutes behind | The pipeline can fall behind and nothing drops stale frames. Check `vcgencmd get_throttled` and the clock first; an under-voltage or overheating Pi runs at a fraction of its speed. Check the load with `top -b -n 2 -d 3 -H -w 200`. Lower `FPS`. |
+| Picture shows old timestamps, minutes behind | The leaky queues drop frames when full, but do not bound latency across the whole pipeline, which can still fall behind. Check `vcgencmd get_throttled` and the clock first; an under-voltage or overheating Pi runs at a fraction of its speed. Check the load with `top -b -n 2 -d 3 -H -w 200`. Lower `FPS`. |
 | `Undervoltage detected!` in `dmesg`, `throttled` bits 0 or 2 set | Weak supply or thin/long cable. Use the official 5.1 V / 3 A supply and a short, thick cable. Bits 16 and above are since-boot history and clear on reboot. |
 | Temperature near 80 C, clock dropping | Cooling. Add heatsinks or a fan, take the lid off. |
 | Heavy CPU use by `kworker ... brcmf_wq` | The Pi is receiving the streams over Wi-Fi. Use Ethernet (`ip route get <gateway ip>` shows the interface). |
@@ -234,7 +236,7 @@ The whole wall at 15 fps, with a healthy supply, heatsinks and the lid off: abou
 
 The measurements above were all taken at 15 fps. A later reading with all four feeds on Enhanced was the same: 55% idle, clock 1500 MHz, `get_throttled` 0x0, 65.7 C, load average 3.2 (single reading).
 
-At 30 fps the wall overloads the Pi 4. One reading: 8% idle (66% user, 25% system), load average 11.4 and rising, clock 1500 MHz, `get_throttled` 0x0, 70.6 C, socket `Recv-Q` about 0, each ffmpeg writing 30.7-31.0 fps, and visibly laggy output. So the cause is not power, heat or the network receive path but CPU capacity. The busiest threads were the four GStreamer `filesrc` readers (about 22% of a core each, against about 15% for each hardware decoder thread), then the compositor and its pool threads, the ffmpeg pipe writers and the Wi-Fi driver. At this rate the plumbing around the decode costs more than the decode itself. Keep `FPS` at 15 unless you measure otherwise on your own setup. Untested ways to make 30 fps viable: Ethernet instead of Wi-Fi, a larger `blocksize` on the `filesrc` elements, NV12 end to end, or an intermediate frame rate. The per-frame scaling figures in the table above were measured on an under-voltage Pi, so they overstate the real cost at full clock.
+At 30 fps the wall overloads the Pi 4. One reading: 8% idle (66% user, 25% system), load average 11.4 and rising, clock 1500 MHz, `get_throttled` 0x0, 70.6 C, socket `Recv-Q` about 0, each ffmpeg writing 30.7-31.0 fps, and visibly laggy output. So the cause is not power, heat or the network receive path but CPU capacity. The busiest threads were the four GStreamer `filesrc` readers (about 22% of a core each, against about 15% for each hardware decoder thread), then the compositor and its pool threads, the ffmpeg pipe writers and the Wi-Fi driver. At this rate the plumbing around the decode costs more than the decode itself. Keep `FPS` at 15 unless you measure otherwise on your own setup. Untested ways to make 30 fps viable include Ethernet instead of Wi-Fi and a larger `blocksize` on the `filesrc` elements. NV12 and an intermediate rate of 20 fps were tested below, but those tests did not establish a viable 30 fps configuration. The per-frame scaling figures in the table above were measured on an under-voltage Pi, so they overstate the real cost at full clock.
 
 With two cameras on Standard (H.264) and two on Enhanced (H.265), the H.264 feeds are decoded in software by ffmpeg (`av:h264` frame threads appear in `top`, and no ffmpeg process holds the Pi 4's H.264 block at `/dev/video10`), while the H.265 feeds still use the HEVC block. The same 15 fps wall then ran at 48% idle, clock 1500 MHz, `get_throttled` 0x0 and 68 C after about an hour. That is roughly 8 percentage points of total CPU more than the all-hardware case, about 0.3 of a core. Back on four H.265 cameras the temperature read 66 C, so the two software decodes account for only about 2 C (one reading each, so treat it as rough).
 
@@ -266,12 +268,12 @@ Overall CPU idle at the three frame rates tried, all single samples: about 55% a
 - One DRM plane per camera without the compositor, which would also move scaling into the display hardware. It needs the SAND modifier problem solved and probably a small custom program using libdrm.
 - A watchdog that restarts the service when a stream goes silent while the process stays alive, and black fallback tiles for dead cameras.
 - Trying GStreamer 1.28.x built from source (for example with `meson devenv`, without a system install) to see whether `v4l2slh265dec ! kmssink` is fixed.
-- Switching the cameras from Enhanced (H.265) to Standard (H.264) encoding. This does change the RTSP streams to H.264 (tested on one camera). It would move decoding to the Pi 4's separate H.264 block (`v4l2h264dec`), which composes cleanly in GStreamer, but a wall built that way was not tried.
+- Building a GStreamer wall using `v4l2h264dec` and cameras set to Standard (H.264). Switching to Standard was tested, but the current ffmpeg wall decodes those streams in software. A GStreamer wall using the Pi 4's separate H.264 block was not tried.
 - Using ffmpeg's `h264_v4l2m2m` decoder for cameras on Standard, which might engage the Pi 4's H.264 block. Not tried.
 
 ## Security notes
 
-- The tokens grant live access to the cameras. They live only in `/etc/camwall/tokens.env` (root:root, 0600), never in the script, the unit, the shell profile or this repository. The `.gitignore` excludes `*.env`.
+- The tokens grant live access to the cameras. Store them only in `/etc/camwall/tokens.env` (root:root, 0600), never in the script, the unit, the shell profile or this repository. The `.gitignore` excludes `*.env`. At runtime, systemd passes them through the service environment and the script includes each token in an ffmpeg command-line argument. Visibility to other users depends on the system's process-access permissions; the env file's permissions alone do not protect these runtime copies.
 - If a token has been pasted anywhere (chat, tickets, shell history), regenerate it in Protect and update the env file.
 - The service runs as an unprivileged account that is only in the `video` and `render` groups.
 - The RTSPS connection does not verify the gateway certificate (see above).
