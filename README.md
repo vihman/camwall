@@ -1,6 +1,7 @@
 # camwall
 
 A 2x2 wall of four UniFi Protect camera streams on a Raspberry Pi 4, running Raspberry Pi OS Lite (no desktop) and rendering straight to the display through KMS/DRM. Hardware HEVC decode, GStreamer composition, managed by systemd, everything done over SSH.
+Written with the help of Claude Sonnet 5.5
 
 > **Highlight: hardware H.265 decoding on a Pi 4.** The four 1280x720 H.265 streams are decoded by the Pi 4's own HEVC block (`rpi-hevc-dec`) and not by the CPU. Stock ffmpeg with `-hwaccel drm` drives it correctly. This is the part that was hard to get working: the obvious GStreamer route (`v4l2slh265dec`) decodes, but its output cannot be displayed correctly on GStreamer 1.26.2, so the wall uses ffmpeg for decoding and GStreamer only for composition and display.
 >
