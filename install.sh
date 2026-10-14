@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install or update camwall on this machine. Safe to run repeatedly (for example
 # after every `git pull` or system update): it only changes what differs, never
-# overwrites /etc/camwall/tokens.env, and restarts the service only when something
+# overwrites /etc/camwall/camwall.conf, and restarts the service only when something
 # changed or the service is not running.
 #
 #   ./install.sh [--no-apt] [--no-restart] [--dry-run]
@@ -31,7 +31,8 @@ fi
 SVC_USER=camwall
 SVC_GROUPS=(video render i2c)
 CONF_DIR=/etc/camwall
-CONF=$CONF_DIR/tokens.env
+CONF=$CONF_DIR/camwall.conf
+OLD_CONF=$CONF_DIR/tokens.env   # name used before camwall.conf
 BIN=/usr/local/bin/camwall
 UNIT=/etc/systemd/system/camwall.service
 PACKAGES=(ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
@@ -97,9 +98,16 @@ fi
 # --- configuration (never overwritten) --------------------------------------
 run install -d -m 0755 "$CONF_DIR"
 configured=1
+if [ -e "$OLD_CONF" ] && [ ! -e "$CONF" ]; then
+  say "migrating $OLD_CONF to $CONF"
+  run mv "$OLD_CONF" "$CONF"; changed=1
+  [ "$DRY" = 0 ] || CONF=$OLD_CONF   # dry run: inspect the file that would be moved
+elif [ -e "$OLD_CONF" ]; then
+  warn "$OLD_CONF is no longer used; $CONF is. Remove the old file once you are sure nothing needs it."
+fi
 if [ ! -e "$CONF" ]; then
   say "creating $CONF from the example"
-  run install -m 0600 -o root -g root "$SRC/config/tokens.env.example" "$CONF"
+  run install -m 0600 -o root -g root "$SRC/config/camwall.conf.example" "$CONF"
   configured=0
 else
   if [ "$(stat -c '%a %U:%G' "$CONF")" != "600 root:root" ]; then

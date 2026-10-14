@@ -5,9 +5,9 @@ performance items need before/after numbers on the Pi before they are adopted.
 
 ## Cleanup
 
-- [ ] Commit the pending edits (`README.md`, `bin/camwall`, `config/tokens.env.example`).
-- [ ] Derive the compositor size from `W` and `H`. `bin/camwall` hardcodes `1920x1080` separately from `W=960; H=540`, and the README tells people to edit both by hand. Use `$((2*W))x$((2*H))` and read `W`/`H` from the environment.
-- [ ] Tidy `.gitignore`: `tokens.env` is already covered by `*.env`.
+- [x] Commit the pending edits.
+- [x] Tile size is configurable (`TILE_WIDTH`, `TILE_HEIGHT`, default 960x540, even, 64-3840) and the compositor size is derived as 2x that. Replaces the hardcoded `1920x1080`.
+- [x] `.gitignore` covers `*.env` (old name) and `camwall.conf`; the old `tokens.env` entry is kept on purpose so a leftover file cannot be committed.
 - [ ] Add lint checks: `shellcheck bin/camwall`, `systemd-analyze verify systemd/camwall.service`, a markdown lint. Wire them into pre-commit and a CI workflow.
 - [x] Add an install script (`install.sh`: packages, user and groups, `i2c-dev`, config from the example, script and unit, restart only on change). Dry run checked on a non-Pi machine only; run it on the Pi.
 - [ ] Split the README: move Measurements, Troubleshooting and Design notes into `docs/`; keep install and operation in the README.
@@ -17,14 +17,14 @@ performance items need before/after numbers on the Pi before they are adopted.
 
 ## Documentation fixes
 
-- [ ] Move `FPS` into the env file (commented-out `#FPS=15` in the example, default stays 15 in the script). Then drop the README's drop-in instructions, the "don't define `FPS` in the env file" pitfall and the `systemctl edit` pitfall, and make the `bin/camwall` header consistent. Keep the README's `ps | grep fps=` check; it still applies.
-- [ ] Decide on renaming `tokens.env` to `camwall.conf` (it also holds `UNIFI_HOST` and would hold `FPS`, so "tokens" is stale). If yes, in one change: rename `config/tokens.env.example` to `config/camwall.conf.example`; update `EnvironmentFile=` in the unit, the error messages in `bin/camwall`, and every README path; and add `camwall.conf` to `.gitignore` (the current `*.env` rule would no longer cover the real file, so a secret could be committed). Existing installs need a migration note: move `/etc/camwall/tokens.env` to `camwall.conf` (keep mode 0600 root:root) before restarting with the new unit, otherwise the service fails to start.
-- [ ] Explain `Environment=HOME=/var/lib/camwall` and `StateDirectory=camwall` in the README (probably GStreamer's registry cache; confirm), since the README says the service user has no home directory.
-- [ ] Update README step 3 (change `W`, `H` and the compositor size by hand) once the compositor size is derived from `W`/`H`.
-- [ ] Reword the README's "larger `blocksize`" 30 fps suggestion to match the pipe-size finding (see the `filesrc` item under Performance).
-- [ ] State the network (Wi-Fi) in the Tested configuration table; the measurements depend on it.
-- [ ] List `TODO.md` in the README's Repository layout block.
-- [ ] Mention `sudo systemctl daemon-reload` in the "Update the script" row when the unit file changed too.
+- [x] Move `FPS` into the env file (commented-out `#FPS=15` in the example, default stays 15 in the script). Then drop the README's drop-in instructions, the "don't define `FPS` in the env file" pitfall and the `systemctl edit` pitfall, and make the `bin/camwall` header consistent. Keep the README's `ps | grep fps=` check; it still applies.
+- [x] Renamed `tokens.env` to `camwall.conf` (`config/camwall.conf.example` now lists every setting with its default). `install.sh` moves an existing `/etc/camwall/tokens.env` to the new name before installing the unit; by hand: `sudo mv /etc/camwall/tokens.env /etc/camwall/camwall.conf`. Not yet run on the Pi.
+- [x] Explain `Environment=HOME=/var/lib/camwall` and `StateDirectory=camwall` in the README (probably GStreamer's registry cache; confirm), since the README says the service user has no home directory.
+- [x] README step 3 now points to `TILE_WIDTH` / `TILE_HEIGHT`.
+- [x] Reword the README's "larger `blocksize`" 30 fps suggestion to match the pipe-size finding (see the `filesrc` item under Performance).
+- [x] State the network (Wi-Fi) in the Tested configuration table; the measurements depend on it.
+- [x] List `TODO.md` in the README's Repository layout block.
+- [x] "Update the script and unit" row now says `git pull && ./install.sh`, which reloads and restarts as needed.
 - [ ] Move the lab-notebook text (earlier runs, under-voltage figures, one-off failures) into `docs/measurements.md` with the README split.
 
 ## Power and display (monitor on a zigbee plug)
@@ -52,7 +52,7 @@ Implemented in `bin/camwall` (probe loop with `DISPLAY_PROBE`, `PROBE_INTERVAL`,
 - [ ] Restrict device access (`DevicePolicy=closed` plus `DeviceAllow=`): needs the full node list first (DRM card and render nodes, `/dev/video*`, `/dev/media*`, `/dev/dma_heap/*`, `/dev/i2c-*`). Find it with the wall running (`fuser -v /dev/dri/* /dev/video* /dev/media* /dev/dma_heap/* /dev/i2c-*`) before enabling anything.
 - [ ] Consider `SystemCallFilter=@system-service`; skipped because `MemoryDenyWriteExecute` and syscall filters can break ffmpeg and GStreamer (ORC JIT) and could not be tested here.
 - [x] FIFOs now live in `RuntimeDirectory=camwall` (`$RUNTIME_DIRECTORY/fifos`), with a `mktemp -d` fallback for running by hand. The script still removes its FIFO directory when it stops the wall, because the service stays up while idle.
-- [x] ffmpeg gets `-timeout` (from `STREAM_TIMEOUT`, default 10 s). Not yet run on the Pi. `-fflags nobuffer -flags low_delay` and `-map 0:v:0` were tried and removed again after the tile widths looked uneven; the cause was never confirmed, so retry them separately, one flag at a time, only on a test Pi.
+- [x] ffmpeg gets `-timeout` (from `STREAM_TIMEOUT`, default 10 s). Not yet run on the Pi. `-fflags nobuffer -flags low_delay` and `-map 0:v:0` were removed after the tile widths looked wrong, but that turned out to be the 1024x768 fallback mode from booting with the monitor off, not these flags. They were never tested on the Pi; if latency matters, retry them one at a time on a test Pi.
 - [ ] Verify on the Pi that a stalled stream really makes ffmpeg exit within `STREAM_TIMEOUT` (for example block one camera's traffic with a firewall rule, not by unplugging the monitor), and that nothing else changes in the picture.
 - [x] Add restart backoff (`RestartSteps=4`, `RestartMaxDelaySec=60`, plus `RestartPreventExitStatus=78` for config errors). Not yet run on the Pi.
 - [ ] Verify on the Pi that the restart delay grows on repeated failures and check (docs do not say) whether it drops back to 3 s after a long healthy run.

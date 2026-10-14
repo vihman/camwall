@@ -11,7 +11,7 @@ StateDirectory=camwall
 RuntimeDirectory=camwall
 RuntimeDirectoryMode=0700
 Environment=HOME=/var/lib/camwall
-EnvironmentFile=/etc/camwall/tokens.env
+EnvironmentFile=/etc/camwall/camwall.conf
 ExecStart=/usr/local/bin/camwall
 Restart=always
 RestartSec=3
