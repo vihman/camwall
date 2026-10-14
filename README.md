@@ -41,11 +41,23 @@ The default setup uses H.265 streams (Protect's Enhanced encoding). A mixed H.26
 bin/camwall                    the wall (installed to /usr/local/bin/camwall)
 systemd/camwall.service        the service unit
 config/tokens.env.example      template for /etc/camwall/tokens.env (secrets live only there)
+install.sh                     installs or updates everything below, safe to re-run
+TODO.md                        open tasks and findings
 ```
 
 ## Installation
 
 Do all of this over SSH. Check the prompt names the Pi before running any command, because a dropped SSH session silently leaves you in your local shell and the commands then run on the wrong machine.
+
+### Quick install and update
+
+[`install.sh`](install.sh) does steps 2, 4, 5 (only creating the file) and 6 below, plus the `i2c-dev` setup for the display check. Run it after a fresh clone and again after every `git pull` or system update:
+
+```bash
+./install.sh
+```
+
+It installs missing packages, creates the `camwall` user or adds it to missing groups, installs the script and unit only when they differ, never overwrites `/etc/camwall/tokens.env`, and restarts the service only when something changed or it is not running. On the first run it creates `tokens.env` from the example and stops so you can fill in the host and tokens (`sudoedit /etc/camwall/tokens.env`); run it again to start the wall. Options: `--dry-run` shows what it would do without changing anything, `--no-apt` skips package installation, `--no-restart` leaves a running service alone. Steps 1 and 3 (Protect setup and hardware checks) stay manual. The numbered steps below are the same thing done by hand.
 
 ### 1. Enable RTSP streams in UniFi Protect
 
@@ -167,7 +179,7 @@ The device numbers (`/dev/video19`, `/dev/media0`) are the ones `v4l2-ctl --list
 | Disable autostart | `sudo systemctl disable --now camwall` |
 | Change frame rate | see [Changing the frame rate](#changing-the-frame-rate) |
 | Rotate tokens | `sudoedit /etc/camwall/tokens.env`, then `sudo systemctl restart camwall` |
-| Update the script | reinstall it with the `install` command in step 6, then restart the service |
+| Update the script and unit | `git pull && ./install.sh` (restarts the service if anything changed) |
 
 Do not run `camwall` by hand while the service is running. Two copies fight over the display and the camera connections. Stop the service first.
 

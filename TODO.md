@@ -9,7 +9,7 @@ performance items need before/after numbers on the Pi before they are adopted.
 - [ ] Derive the compositor size from `W` and `H`. `bin/camwall` hardcodes `1920x1080` separately from `W=960; H=540`, and the README tells people to edit both by hand. Use `$((2*W))x$((2*H))` and read `W`/`H` from the environment.
 - [ ] Tidy `.gitignore`: `tokens.env` is already covered by `*.env`.
 - [ ] Add lint checks: `shellcheck bin/camwall`, `systemd-analyze verify systemd/camwall.service`, a markdown lint. Wire them into pre-commit and a CI workflow.
-- [ ] Add an install script or Makefile wrapping README steps 4-6 (user, config, install commands).
+- [x] Add an install script (`install.sh`: packages, user and groups, `i2c-dev`, config from the example, script and unit, restart only on change). Dry run checked on a non-Pi machine only; run it on the Pi.
 - [ ] Split the README: move Measurements, Troubleshooting and Design notes into `docs/`; keep install and operation in the README.
 - [ ] Move the README snippets into scripts: `tools/check-hwdec.sh` (fuser, interrupt counter, A/B benchmark) and `tools/set-fps.sh`.
 - [ ] Add a bash version guard. `wait -n "${pids[@]}"` needs bash 5.1+; fail early with a clear message.
