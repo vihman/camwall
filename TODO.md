@@ -43,17 +43,18 @@ Implemented in `bin/camwall` (probe loop with `DISPLAY_PROBE`, `PROBE_INTERVAL`,
 - [ ] Soak test: probe for several hours with the monitor on and count false failures; add retries or `--sleep-multiplier` if there are any.
 - [ ] Fallback if DDC proves flaky: have the plug's controller (Home Assistant / zigbee2mqtt) stop and start `camwall` (SSH with a restricted sudoers rule, or a `mosquitto_sub` service on the Pi).
 - [ ] Measure power with the wall stopped vs running, and record what the 17 W reading includes (Pi only, or Pi plus monitor).
-- [ ] Add `consoleblank=0` to the install steps (it is only in the README's Troubleshooting table, and is missing from the reference Pi's `cmdline.txt`).
 
 ## Hardening and robustness
 
-- [ ] Hide tokens from `ps`: add `ProtectProc=invisible` and `ProcSubset=pid` to the unit (tokens are in ffmpeg command lines).
-- [ ] Harden the unit: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, empty `CapabilityBoundingSet`, `DeviceAllow` limited to DRM and V4L2 nodes. Check with `systemd-analyze security camwall` and test each setting on the Pi (DRM/V4L2 can be touchy).
-- [ ] Use `RuntimeDirectory=camwall` and `$RUNTIME_DIRECTORY` for the FIFOs instead of `mktemp -d` in `/tmp`; drops the manual `rm -rf` cleanup.
-- [ ] Add ffmpeg timeouts and low-latency flags: `-timeout` (socket I/O timeout), `-fflags nobuffer -flags low_delay`, and `-map 0:v:0`. A stalled stream then exits and triggers the restart, a cheap version of the watchdog.
+- [x] `ProtectProc=invisible` added. Correction to the original idea: it hides *other* processes from the service, not the tokens from other users. Hiding the ffmpeg command lines from other users needs `hidepid=2` on `/proc` host-wide (documented in the README, not automated). `ProcSubset=pid` was left out because it hides `/proc/stat`, `/proc/meminfo` and `/proc/sys`, which libraries may read; try it on the Pi if wanted.
+- [x] Harden the unit: `NoNewPrivileges`, empty `CapabilityBoundingSet`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, kernel/cgroup/clock/hostname protections, `RestrictAddressFamilies` (with `AF_NETLINK` for the resolver), `RestrictNamespaces`, `UMask=0077`. Offline exposure score 9.0 -> 3.4. Not yet run on the Pi: start the service and check that the wall still comes up, the decoder is held (`fuser -v /dev/video19`), the display probe works and the journal shows no permission errors.
+- [ ] Restrict device access (`DevicePolicy=closed` plus `DeviceAllow=`): needs the full node list first (DRM card and render nodes, `/dev/video*`, `/dev/media*`, `/dev/dma_heap/*`, `/dev/i2c-*`). Find it with the wall running (`fuser -v /dev/dri/* /dev/video* /dev/media* /dev/dma_heap/* /dev/i2c-*`) before enabling anything.
+- [ ] Consider `SystemCallFilter=@system-service`; skipped because `MemoryDenyWriteExecute` and syscall filters can break ffmpeg and GStreamer (ORC JIT) and could not be tested here.
+- [x] FIFOs now live in `RuntimeDirectory=camwall` (`$RUNTIME_DIRECTORY/fifos`), with a `mktemp -d` fallback for running by hand. The script still removes its FIFO directory when it stops the wall, because the service stays up while idle.
+- [x] ffmpeg gets `-timeout` (from `STREAM_TIMEOUT`, default 10 s), `-fflags nobuffer -flags low_delay` and `-map 0:v:0`. Not yet run on the Pi.
+- [ ] Verify on the Pi that a stalled stream really makes ffmpeg exit within `STREAM_TIMEOUT` (for example block one camera's traffic with a firewall rule, not by unplugging the monitor), and that `low_delay` does not cause visible artifacts or dropped frames.
 - [x] Add restart backoff (`RestartSteps=4`, `RestartMaxDelaySec=60`, plus `RestartPreventExitStatus=78` for config errors). Not yet run on the Pi.
 - [ ] Verify on the Pi that the restart delay grows on repeated failures and check (docs do not say) whether it drops back to 3 s after a long healthy run.
-- [ ] Verify the gateway certificate. Investigate `-ca_file` with the exported UniFi CA (the README only records that `-tls_verify 0` is rejected).
 - [x] Add a startup preflight (`preflight`, `check_hwdec` in `bin/camwall`: missing tools fatal, missing or inaccessible `rpi-hevc-dec`, no `drm` hwaccel and ffmpeg not holding the decoder node only warn). Tested with stubs only; confirm on the Pi that the real `/proc/PID/fd` check sees `/dev/video19`.
 - [x] Validate `FPS` (whole number 1-100) and the `PROBE_*` settings; config errors exit 78. Missing `UNIFI_HOST` and tokens are now checked at startup, before waiting for the display, and also exit 78.
 
@@ -62,5 +63,4 @@ Implemented in `bin/camwall` (probe loop with `DISPLAY_PROBE`, `PROBE_INTERVAL`,
 - [ ] Reduce `filesrc` read overhead (busiest thread at 30 fps). `blocksize` alone likely gains little: a FIFO holds 64 KB by default, so each `read()` returns at most that, against a ~780 KB I420 frame. The real limit is the pipe size (`F_SETPIPE_SZ`, capped by `/proc/sys/fs/pipe-max-size`, 1 MB by default); neither ffmpeg nor `filesrc` sets it. Options to test: a small helper that raises the pipe size, or a Unix socket instead of a FIFO (ffmpeg `unix:` output, larger socket buffers). Measure first; drop this item if there is no gain.
 - [ ] Re-run the 30 fps test on Ethernet with the `blocksize` change, taking several samples instead of single readings.
 - [ ] Try the hardware H.264 path for cameras on Standard: `h264_v4l2m2m`, picking the decoder per camera via `ffprobe`.
-- [ ] Test GStreamer 1.28.x (built from source, no system install) to see whether `v4l2slh265dec ! kmssink` works, which could remove the ffmpeg and FIFO layer.
 - [ ] Add black fallback tiles. The compositor waits for all four inputs, so one dead camera blanks the wall. Feed a `videotestsrc` fallback and set `ignore-inactive-pads` / `latency` on the compositor, or run a per-camera reconnect loop.

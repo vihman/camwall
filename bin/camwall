@@ -21,6 +21,8 @@
 #   PROBE_INTERVAL     seconds between probes while the wall runs (default 5)
 #   PROBE_FAILS        consecutive failed probes before the wall stops (default 3)
 #   PROBE_SETTLE       seconds to wait after the display returns (default 3)
+#   STREAM_TIMEOUT     seconds without data before ffmpeg gives up on a stalled
+#                      camera, which restarts the wall (default 10)
 
 log() { echo "$*" >&2; }
 config_error() { log "camwall: $*"; exit 78; }
@@ -40,10 +42,12 @@ W=960; H=540
 FPS=${FPS:-15}
 PROBE=${DISPLAY_PROBE-ddcutil getvcp d6}
 PROBE_INTERVAL=${PROBE_INTERVAL:-5}; PROBE_FAILS=${PROBE_FAILS:-3}; PROBE_SETTLE=${PROBE_SETTLE:-3}
+STREAM_TIMEOUT=${STREAM_TIMEOUT:-10}
 int_in FPS "$FPS" 1 100;                     FPS=$((10#$FPS))
 int_in PROBE_INTERVAL "$PROBE_INTERVAL" 1 3600; PROBE_INTERVAL=$((10#$PROBE_INTERVAL))
 int_in PROBE_FAILS "$PROBE_FAILS" 1 100;     PROBE_FAILS=$((10#$PROBE_FAILS))
 int_in PROBE_SETTLE "$PROBE_SETTLE" 0 600;   PROBE_SETTLE=$((10#$PROBE_SETTLE))
+int_in STREAM_TIMEOUT "$STREAM_TIMEOUT" 1 300; STREAM_TIMEOUT=$((10#$STREAM_TIMEOUT))
 
 # Intentionally unquoted: DISPLAY_PROBE is a command line.
 if [ -z "$PROBE" ] || [ "$PROBE" = none ]; then
@@ -95,13 +99,21 @@ trap 'exit 143' INT TERM
 
 pids=(); gst=
 start_wall() {
-  D=$(mktemp -d) || { log "cannot create temporary directory"; exit 1; }
+  # Under systemd the FIFOs live in RuntimeDirectory=camwall (/run/camwall);
+  # run by hand, fall back to a temporary directory.
+  if [ -n "${RUNTIME_DIRECTORY:-}" ]; then
+    D=${RUNTIME_DIRECTORY%%:*}/fifos
+    rm -rf "$D"; mkdir -m 0700 "$D" || { log "cannot create $D"; exit 1; }
+  else
+    D=$(mktemp -d) || { log "cannot create temporary directory"; exit 1; }
+  fi
   pids=(); local args=() i t
   for i in 0 1 2 3; do
     t=TOKEN$((i+1))
     mkfifo "$D/c$i" || { log "cannot create FIFO for cam$((i+1))"; exit 1; }
     ffmpeg -nostdin -loglevel error -rtsp_transport tcp -hwaccel drm \
-      -i "rtsps://$HOST:7441/${!t}" -an \
+      -timeout $((STREAM_TIMEOUT * 1000000)) -fflags nobuffer -flags low_delay \
+      -i "rtsps://$HOST:7441/${!t}" -map 0:v:0 -an \
       -vf "fps=$FPS,scale=$W:$H:flags=fast_bilinear" -pix_fmt yuv420p -f rawvideo pipe:1 \
       2> >(sed -u "s/^/cam$((i+1)): /" >&2) > "$D/c$i" &
     pids+=($!)

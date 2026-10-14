@@ -181,7 +181,7 @@ The device numbers (`/dev/video19`, `/dev/media0`) are the ones `v4l2-ctl --list
 | Rotate tokens | `sudoedit /etc/camwall/tokens.env`, then `sudo systemctl restart camwall` |
 | Update the script and unit | `git pull && ./install.sh` (restarts the service if anything changed) |
 
-Do not run `camwall` by hand while the service is running. Two copies fight over the display and the camera connections. Stop the service first.
+Under systemd the FIFOs live in `/run/camwall` (`RuntimeDirectory=`, removed when the service stops). Run by hand, the script falls back to a temporary directory. Do not run `camwall` by hand while the service is running. Two copies fight over the display and the camera connections. Stop the service first.
 
 ffmpeg errors in the journal carry a `camN:` prefix, which tells you which camera failed.
 
@@ -211,7 +211,7 @@ Two pitfalls:
 
 ### How failures are handled
 
-The script runs the wall once and exits as soon as any ffmpeg process or the GStreamer pipeline dies. systemd restarts it after 3 seconds, with no limit on retries. Repeated failures back off: the delay grows in four steps from 3 s to a maximum of 60 s (`RestartSteps=`, `RestartMaxDelaySec=`), so a broken gateway or network is not hammered. A configuration error (missing `UNIFI_HOST` or token, invalid `FPS` or `PROBE_*` value) exits with status 78 and is not restarted at all; the journal says what to fix, and after fixing it run `sudo systemctl restart camwall`. The compositor waits for all four inputs, so one camera that stays offline keeps the screen blank until it returns. Showing black tiles for dead cameras would need a different design and has not been built.
+The script runs the wall once and exits as soon as any ffmpeg process or the GStreamer pipeline dies. systemd restarts it after 3 seconds, with no limit on retries. Repeated failures back off: the delay grows in four steps from 3 s to a maximum of 60 s (`RestartSteps=`, `RestartMaxDelaySec=`), so a broken gateway or network is not hammered. A camera that goes silent without closing its connection is caught by ffmpeg's socket timeout (`STREAM_TIMEOUT`, default 10 s, passed as `-timeout`): ffmpeg exits and the wall restarts like for any other dead camera. ffmpeg also runs with `-fflags nobuffer -flags low_delay` for lower latency and `-map 0:v:0` so that only the first video stream is used. A configuration error (missing `UNIFI_HOST` or token, invalid `FPS` or `PROBE_*` value) exits with status 78 and is not restarted at all; the journal says what to fix, and after fixing it run `sudo systemctl restart camwall`. The compositor waits for all four inputs, so one camera that stays offline keeps the screen blank until it returns. Showing black tiles for dead cameras would need a different design and has not been built.
 
 ### Startup checks
 
@@ -229,6 +229,7 @@ The wall also depends on the monitor being powered. While it runs, the script pr
 | `Undervoltage detected!` in `dmesg`, `throttled` bits 0 or 2 set | Weak supply or thin/long cable. Use the official 5.1 V / 3 A supply and a short, thick cable. Bits 16 and above are since-boot history and clear on reboot. |
 | Temperature near 80 C, clock dropping | Cooling. Add heatsinks or a fan, take the lid off. |
 | Heavy CPU use by `kworker ... brcmf_wq` | The Pi is receiving the streams over Wi-Fi. Use Ethernet (`ip route get <gateway ip>` shows the interface). |
+| `Connection timed out` or `Operation timed out` from one camera | The stream stalled for longer than `STREAM_TIMEOUT` (default 10 s) and ffmpeg gave up; the wall restarts. If it repeats on a healthy network, raise `STREAM_TIMEOUT` in `/etc/camwall/tokens.env`. |
 | `Connection reset by peer`, `Error in the pull function` from one camera | That camera's session was dropped. The wall restarts itself. If it repeats, check for a saturated Pi or an unstable network path. |
 | `Could not find ref with POC ...` at start | ffmpeg joined the stream between keyframes. Normal at startup. |
 | `rpi-hevc-dec ... Missing inuse DPB ent 0` once at startup | Normal at startup. Worry only if it repeats during steady playback. |
@@ -293,7 +294,7 @@ Overall CPU idle at the three frame rates tried, all single samples: about 55% a
 | `v4l2slh265dec ! kmssink` (GStreamer 1.26.2) | Decodes, but the displayed picture is garbled (SAND128 modifier, see above). One early run also failed with "Driver did not accept the bitstream parameters" and a crash; it did not reproduce. |
 | mpv from Debian Trixie (0.40) | No `v4l2request` hwdec, falls back to software. |
 | Kodi | Hardware decode works, but it shows one video at a time. |
-| ffmpeg `-tls_verify 0` | This ffmpeg build rejects the option for RTSP input. The connection works without it, which means the self-signed gateway certificate is not verified. Acceptable only on a trusted network. |
+| ffmpeg `-tls_verify 0` | This ffmpeg build rejects the option for RTSP input. The connection works without it, which means the self-signed gateway certificate is not verified. Intentionally left unverified, since camwall is meant for an internal, protected network. |
 
 ### Ideas not built
 
@@ -308,4 +309,7 @@ Overall CPU idle at the three frame rates tried, all single samples: about 55% a
 - The tokens grant live access to the cameras. Store them only in `/etc/camwall/tokens.env` (root:root, 0600), never in the script, the unit, the shell profile or this repository. The `.gitignore` excludes `*.env`. At runtime, systemd passes them through the service environment and the script includes each token in an ffmpeg command-line argument. Visibility to other users depends on the system's process-access permissions; the env file's permissions alone do not protect these runtime copies.
 - If a token has been pasted anywhere (chat, tickets, shell history), regenerate it in Protect and update the env file.
 - The service runs as an unprivileged account that is only in the `video`, `render` and `i2c` groups.
-- The RTSPS connection does not verify the gateway certificate (see above).
+- The unit is sandboxed: no new privileges and an empty capability set, a read-only filesystem except its own state and runtime directories (`ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`), no access to kernel tunables, modules, logs, control groups or the clock, and network sockets limited to IPv4, IPv6, Unix and netlink. `systemd-analyze security camwall` reports the result; the exposure level of the unit file alone went from 9.0 to 3.4 in an offline check. Device access (DRM, V4L2, DMA heaps, i2c) is not restricted yet because the exact set of nodes the decoder path needs has not been mapped on the Pi. `ProtectProc=invisible` stops the service from seeing other users' processes. It does not hide the service's own processes from other users.
+- To keep the tokens out of other users' `ps` output you would have to mount `/proc` with `hidepid=2` on the whole system, which affects every login session and is not done by `install.sh`. This was not tried on the reference Pi.
+- If a hardening setting breaks the wall (for example DRM permission errors right after an update), find it with `sudo systemctl edit camwall`: override one directive at a time, for example `ProtectSystem=full` or `RestrictAddressFamilies=`, restart, and report which one it was.
+- The RTSPS connection does not verify the gateway certificate (see above). This is intentional: camwall is meant for an internal, protected network, so do not use it across an untrusted one.
