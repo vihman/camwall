@@ -6,13 +6,16 @@ StartLimitIntervalSec=0
 
 [Service]
 User=camwall
-SupplementaryGroups=video render
+SupplementaryGroups=video render i2c
 StateDirectory=camwall
 Environment=HOME=/var/lib/camwall
 EnvironmentFile=/etc/camwall/tokens.env
 ExecStart=/usr/local/bin/camwall
 Restart=always
 RestartSec=3
+RestartSteps=4
+RestartMaxDelaySec=60
+RestartPreventExitStatus=78
 TimeoutStopSec=15
 
 [Install]

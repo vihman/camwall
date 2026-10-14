@@ -60,7 +60,7 @@ Treat the token as a credential: anyone on the network who has it can watch that
 ```bash
 sudo apt update
 sudo apt install -y ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-base \
-  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad v4l-utils libdrm-tests
+  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad v4l-utils libdrm-tests ddcutil
 ```
 
 `v4l-utils` and `libdrm-tests` are only for the checks in the next step.
@@ -79,11 +79,20 @@ If the monitor's preferred mode is not 1920x1080, change `W`, `H` and the compos
 
 ### 4. Create the service account
 
-A dedicated system user with no login and no home directory, in the two groups needed for the display and the decoder:
+A dedicated system user with no login and no home directory, in the groups needed for the display, the decoder and the display check (`i2c`):
 
 ```bash
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin --groups video,render camwall
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin --groups video,render,i2c camwall
 ```
+
+The wall stops itself while the monitor has no power (for example a smart plug cut), using DDC/CI over HDMI. That needs the `i2c-dev` kernel module, loaded now and at every boot:
+
+```bash
+echo i2c-dev | sudo tee /etc/modules-load.d/i2c.conf
+sudo modprobe i2c-dev
+```
+
+Check that it works with the monitor on and off: `ddcutil getvcp d6` should print `DPM: On` with the monitor powered and `Display not found` without. The HDMI connector status cannot be used for this, because it keeps reporting `connected` (the EDID is served from the Pi's 5 V). If your monitor does not answer DDC/CI, set `DISPLAY_PROBE=none` in the configuration below.
 
 ### 5. Install the configuration
 
@@ -166,7 +175,7 @@ ffmpeg errors in the journal carry a `camN:` prefix, which tells you which camer
 
 ### Changing the frame rate
 
-`FPS` is read from the service's environment and defaults to 15. Create a drop-in file and restart the service:
+`FPS` is read from the service's environment and defaults to 15. It must be a whole number from 1 to 100; anything else stops the service with a configuration error (status 78). Create a drop-in file and restart the service:
 
 ```bash
 sudo mkdir -p /etc/systemd/system/camwall.service.d
@@ -190,7 +199,15 @@ Two pitfalls:
 
 ### How failures are handled
 
-The script runs the wall once and exits as soon as any ffmpeg process or the GStreamer pipeline dies. systemd restarts it after 3 seconds, with no limit on retries. The compositor waits for all four inputs, so one camera that stays offline keeps the screen blank until it returns. Showing black tiles for dead cameras would need a different design and has not been built.
+The script runs the wall once and exits as soon as any ffmpeg process or the GStreamer pipeline dies. systemd restarts it after 3 seconds, with no limit on retries. Repeated failures back off: the delay grows in four steps from 3 s to a maximum of 60 s (`RestartSteps=`, `RestartMaxDelaySec=`), so a broken gateway or network is not hammered. A configuration error (missing `UNIFI_HOST` or token, invalid `FPS` or `PROBE_*` value) exits with status 78 and is not restarted at all; the journal says what to fix, and after fixing it run `sudo systemctl restart camwall`. The compositor waits for all four inputs, so one camera that stays offline keeps the screen blank until it returns. Showing black tiles for dead cameras would need a different design and has not been built.
+
+### Startup checks
+
+At start the script checks that `ffmpeg` and `gst-launch-1.0` exist (fatal if not) and warns in the journal if no `rpi-hevc-dec` V4L2 device is found, if the service user cannot open it, or if this ffmpeg has no `drm` hwaccel; in those cases H.265 is decoded in software. About 10 s after the wall starts it also checks that each ffmpeg holds the decoder device open and logs `camN: ffmpeg does not hold ...` for one that does not, which is expected for a camera on H.264 (Standard). These are warnings only. They automate the `fuser` check in [Confirming the hardware decoder is in use](#confirming-the-hardware-decoder-is-in-use).
+
+### Display presence
+
+The wall also depends on the monitor being powered. While it runs, the script probes the display every `PROBE_INTERVAL` seconds (default 5) with `DISPLAY_PROBE` (default `ddcutil getvcp d6`). After `PROBE_FAILS` consecutive failures (default 3, so about 15 s) it stops all ffmpeg processes and the pipeline, which also ends the RTSP sessions, and idles, probing until the monitor answers again. It then waits `PROBE_SETTLE` seconds and starts the wall. The service stays `active` while idle; the journal shows `no display detected, idle until it returns` and `display detected, starting the wall`. If the Pi boots with the monitor off, the wall simply starts later. This replaces nothing in the failure handling above: a dead camera still exits the script and systemd restarts it. If the probe command is not installed, the script logs that and runs without the check; `DISPLAY_PROBE=none` turns it off explicitly. All four settings are optional and go in `/etc/camwall/tokens.env`.
 
 ## Troubleshooting
 
@@ -203,8 +220,10 @@ The script runs the wall once and exits as soon as any ffmpeg process or the GSt
 | `Connection reset by peer`, `Error in the pull function` from one camera | That camera's session was dropped. The wall restarts itself. If it repeats, check for a saturated Pi or an unstable network path. |
 | `Could not find ref with POC ...` at start | ffmpeg joined the stream between keyframes. Normal at startup. |
 | `rpi-hevc-dec ... Missing inuse DPB ent 0` once at startup | Normal at startup. Worry only if it repeats during steady playback. |
-| DRM permission or "master" errors in the journal | The service user must be in `video` and `render`. Check `id camwall`. Make sure no other process holds the display. |
+| DRM permission or "master" errors in the journal | The service user must be in `video` and `render` (and `i2c` for the display check). Check `id camwall`. Make sure no other process holds the display. |
 | Screen goes black after about 10 minutes while the service is active | Console blanking. Add `consoleblank=0` to the single line in `/boot/firmware/cmdline.txt` (keep it on one line) and reboot. |
+| Journal says `preflight:` or `ffmpeg does not hold` | The hardware decoder is not in use (see Startup checks). Check `v4l2-ctl --list-devices`, `id camwall` (groups `video`, `render`) and `ffmpeg -hwaccels`. Expected for a camera on H.264. |
+| Journal says `no display detected` while the monitor is on | `ddcutil getvcp d6` fails as the `camwall` user. Check `i2c-dev` is loaded (`lsmod \| grep i2c_dev`), `id camwall` shows `i2c`, and the monitor supports DDC/CI (some need it enabled in their on-screen menu). Otherwise set `DISPLAY_PROBE=none`. |
 | Stale frame stays on the monitor after stopping a test | `sudo chvt 2; sudo chvt 1` restores the console. |
 | Kernel `WARNING` in `vc4_hvs.c` (`__vc4_hvs_stop_channel`) on an HDMI hotplug event | Seen once at boot. The trace shows the framebuffer console reacting to a hotplug. No visible effect was reported. Test the monitor power cycle. |
 
@@ -276,5 +295,5 @@ Overall CPU idle at the three frame rates tried, all single samples: about 55% a
 
 - The tokens grant live access to the cameras. Store them only in `/etc/camwall/tokens.env` (root:root, 0600), never in the script, the unit, the shell profile or this repository. The `.gitignore` excludes `*.env`. At runtime, systemd passes them through the service environment and the script includes each token in an ffmpeg command-line argument. Visibility to other users depends on the system's process-access permissions; the env file's permissions alone do not protect these runtime copies.
 - If a token has been pasted anywhere (chat, tickets, shell history), regenerate it in Protect and update the env file.
-- The service runs as an unprivileged account that is only in the `video` and `render` groups.
+- The service runs as an unprivileged account that is only in the `video`, `render` and `i2c` groups.
 - The RTSPS connection does not verify the gateway certificate (see above).
