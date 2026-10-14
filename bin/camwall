@@ -17,7 +17,7 @@
 #   TOKEN1..TOKEN4     RTSPS stream tokens (the last path segment of the Protect URL)
 #   FPS                output frame rate per tile, 1-100 (default 15)
 #   DISPLAY_PROBE      command that succeeds while the monitor is powered
-#                      (default "ddcutil getvcp d6"; "none" disables the check)
+#                      (default "ddcutil --syslog never getvcp d6"; "none" disables the check)
 #   PROBE_INTERVAL     seconds between probes while the wall runs (default 5)
 #   PROBE_FAILS        consecutive failed probes before the wall stops (default 3)
 #   PROBE_SETTLE       seconds to wait after the display returns (default 3)
@@ -40,7 +40,7 @@ done
 
 W=960; H=540
 FPS=${FPS:-15}
-PROBE=${DISPLAY_PROBE-ddcutil getvcp d6}
+PROBE=${DISPLAY_PROBE-ddcutil --syslog never getvcp d6}
 PROBE_INTERVAL=${PROBE_INTERVAL:-5}; PROBE_FAILS=${PROBE_FAILS:-3}; PROBE_SETTLE=${PROBE_SETTLE:-3}
 STREAM_TIMEOUT=${STREAM_TIMEOUT:-10}
 int_in FPS "$FPS" 1 100;                     FPS=$((10#$FPS))
@@ -112,8 +112,8 @@ start_wall() {
     t=TOKEN$((i+1))
     mkfifo "$D/c$i" || { log "cannot create FIFO for cam$((i+1))"; exit 1; }
     ffmpeg -nostdin -loglevel error -rtsp_transport tcp -hwaccel drm \
-      -timeout $((STREAM_TIMEOUT * 1000000)) -fflags nobuffer -flags low_delay \
-      -i "rtsps://$HOST:7441/${!t}" -map 0:v:0 -an \
+      -timeout $((STREAM_TIMEOUT * 1000000)) \
+      -i "rtsps://$HOST:7441/${!t}" -an \
       -vf "fps=$FPS,scale=$W:$H:flags=fast_bilinear" -pix_fmt yuv420p -f rawvideo pipe:1 \
       2> >(sed -u "s/^/cam$((i+1)): /" >&2) > "$D/c$i" &
     pids+=($!)
