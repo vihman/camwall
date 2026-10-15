@@ -114,7 +114,11 @@ else
     say "fixing permissions of $CONF (expected 0600 root:root)"
     run chmod 0600 "$CONF"; run chown root:root "$CONF"
   fi
-  if grep -qE '=(replace-me|unifi\.example\.com)$' "$CONF"; then configured=0; fi
+  if [ ! -r "$CONF" ]; then
+    echo "    cannot read $CONF as $(id -un); skipping the placeholder check (run as root to include it)"
+  elif grep -qE '=(replace-me|unifi\.example\.com)$' "$CONF"; then
+    configured=0
+  fi
 fi
 
 # --- script and unit --------------------------------------------------------
