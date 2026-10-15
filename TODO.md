@@ -33,14 +33,17 @@ Findings (2026-10-14, Pi 4, vc4-kms, monitor on HDMI-A-1):
 - HDMI connector status cannot detect the monitor power being cut: `status` stays `connected`, and a forced probe (`modetest -M vc4 -c`) still reports `connected` with the EDID (530x300 mm), even when the Pi booted with the monitor unpowered. The EDID is evidently served from the Pi's 5V. Boot config has no hotplug overrides, so that is not the cause.
 - DDC/CI works as a presence probe: `ddcutil getvcp d6` prints `Display not found` when the monitor is unpowered and `DPM: On` when it is on. It needs the `i2c-dev` module (`sudo modprobe i2c-dev`).
 - Timing run (one probe every ~2 s plus call time): failures start within ~3 s of the cut; 6 consecutive failures over ~22 s while off; success again once the monitor was up; no failures in 12 calls with the monitor on (small sample).
+- The monitor answers DDC for features it does not support (`Feature 0xdd should not exist but ... succeeds`); `ddcutil` copes with it and `getvcp d6` still gives a real answer, but it probably adds a second or two per probe.
+- Booting the Pi with the monitor off leaves the console at the 1024x768 fallback mode, and `kmssink` then crops the picture (uneven tile widths). Reboot with the monitor on fixes it. Accepted as a corner case; the README troubleshooting table describes it.
 
-Implemented in `bin/camwall` (probe loop with `DISPLAY_PROBE`, `PROBE_INTERVAL`, `PROBE_FAILS`, `PROBE_SETTLE`), the `i2c` group in the unit and the README. Tested only against stub `ffmpeg` / `gst-launch-1.0` / `ddcutil` binaries; not yet run on the Pi.
+Implemented in `bin/camwall` (probe loop with `DISPLAY_PROBE`, `PROBE_INTERVAL`, `PROBE_FAILS`, `PROBE_SETTLE`), the `i2c` group in the unit and the README. Running in production since 2026-10-15: cutting and restoring the monitor plug stops and restarts the wall, and a boot with the monitor off waits for it. What is left below is measurement and longer-term checks.
 
-- [ ] Test on the Pi: install the new script and unit, cut and restore the plug, check the journal transitions, that ffmpeg/gst processes disappear while idle, and that the picture comes back.
-- [ ] Verify the `camwall` user can run `ddcutil getvcp d6` (group `i2c`, `i2c-dev` loaded at boot via `/etc/modules-load.d/i2c.conf`).
-- [ ] Check that killing the pipeline on display loss leaves no stuck ffmpeg (a writer blocked on a FIFO) and that `kmssink` releases the display cleanly.
-- [ ] Journal noise from the probe is silenced with `--syslog never` (verified by hand on the Pi, not yet via the service). Next: log how long each failed probe takes while idle; a boot with the monitor off took about 30 s from the last ddcutil message to `display detected` and it is unclear whether that is the monitor's boot time or a slow probe. Optionally add a `--bus` setting (the probe checks buses 20 and 21, one per HDMI port).
-- [ ] Measure the probe's own cost: plain `ddcutil getvcp d6` does display detection on every call; use `--bus=N` if it shows up in `top`.
+- [x] Tested on the Pi: plug cut and restore stops and restarts the wall, and the picture comes back. Boot with the monitor off also works.
+- [x] The `camwall` user runs `ddcutil` under the service (group `i2c`, `i2c-dev` loaded at boot); seen in the journal of a boot with the monitor off.
+- [x] After a plug cut (once the failure window has passed) no ffmpeg or `gst-launch-1.0` process is left and `/run/camwall/fifos` is gone, so the stop path works with real ffmpeg. `sudo fuser -v /dev/dri/card1` shows no holder, so `kmssink` released the display.
+- [x] Journal noise from the probe is silenced with `--syslog never` (no `ddcutil` lines after the service restart on 2026-10-15).
+- [ ] Optional: log how long each failed probe takes while idle. A boot with the monitor off took about 30 s from the last `ddcutil` message to `display detected`, and it is unclear whether that is the monitor's boot time or a slow probe.
+- [x] Probe cost measured on the Pi while idle (monitor unpowered): 1272 ms CPU in 60 s, about 2% of one core. Accepted. If it ever matters, raise `PROBE_INTERVAL` (10 halves it) rather than adding `--bus`.
 - [ ] Soak test: probe for several hours with the monitor on and count false failures; add retries or `--sleep-multiplier` if there are any.
 - [ ] Fallback if DDC proves flaky: have the plug's controller (Home Assistant / zigbee2mqtt) stop and start `camwall` (SSH with a restricted sudoers rule, or a `mosquitto_sub` service on the Pi).
 - [ ] Measure power with the wall stopped vs running, and record what the 17 W reading includes (Pi only, or Pi plus monitor).
