@@ -4,41 +4,169 @@
 # Each camera: ffmpeg (hardware HEVC decode, scale) -> raw I420 frames -> FIFO
 # All four:    GStreamer filesrc -> rawvideoparse -> compositor -> kmssink
 #
-# Runs the wall once and exits non-zero as soon as any camera feed or the
-# pipeline dies. The restart policy lives in camwall.service (Restart=always).
+# The wall runs only while a display answers the presence probe (a monitor with
+# no power makes it fail, see DISPLAY_PROBE). When the display is gone the wall
+# is stopped (no decoding, no RTSP sessions) and the script idles until it returns.
+#
+# Exits non-zero as soon as any camera feed or the pipeline dies. The restart
+# policy lives in camwall.service (Restart=always, with backoff). A configuration
+# error exits with 78 (EX_CONFIG), which the unit does not restart on.
 #
 # Configuration comes from the environment (systemd EnvironmentFile):
 #   UNIFI_HOST         gateway name or IP that serves RTSPS on port 7441
 #   TOKEN1..TOKEN4     RTSPS stream tokens (the last path segment of the Protect URL)
-#   FPS                output frame rate per tile (default 15)
+#   FPS                output frame rate per tile, 1-100 (default 15)
+#   TILE_WIDTH         width of one tile in pixels, even, 64-3840 (default 960)
+#   TILE_HEIGHT        height of one tile in pixels, even, 64-3840 (default 540)
+#                      The screen is 2x2 tiles, so 2*TILE_WIDTH x 2*TILE_HEIGHT.
+#   DISPLAY_PROBE      command that succeeds while the monitor is powered
+#                      (default "ddcutil --syslog never getvcp d6"; "none" disables the check)
+#   PROBE_INTERVAL     seconds between probes while the wall runs (default 5)
+#   PROBE_FAILS        consecutive failed probes before the wall stops (default 3)
+#   PROBE_SETTLE       seconds to wait after the display returns (default 3)
+#   STREAM_TIMEOUT     seconds without data before ffmpeg gives up on a stalled
+#                      camera, which restarts the wall (default 10)
 
-HOST=${UNIFI_HOST:?UNIFI_HOST is not set (see /etc/camwall/tokens.env)}
-W=960; H=540; FPS=${FPS:-15}
+log() { echo "$*" >&2; }
+config_error() { log "camwall: $*"; exit 78; }
+nap() { sleep "$1" & wait $!; }   # interruptible by the INT/TERM trap
 
-D=$(mktemp -d) || { echo "cannot create temporary directory" >&2; exit 1; }
-trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$D"' EXIT
-trap 'exit 143' INT TERM
+# int_in NAME VALUE MIN MAX: fail on anything but a whole number in range.
+int_in() { [[ $2 =~ ^[0-9]+$ ]] && (( 10#$2 >= $3 && 10#$2 <= $4 )) ||
+             config_error "$1 must be a whole number from $3 to $4 (got '$2')"; }
 
-pids=(); args=()
-for i in 0 1 2 3; do
-  t=TOKEN$((i+1))
-  : "${!t:?$t is not set (see /etc/camwall/tokens.env)}"
-  mkfifo "$D/c$i" || { echo "cannot create FIFO for cam$((i+1))" >&2; exit 1; }
-  ffmpeg -nostdin -loglevel error -rtsp_transport tcp -hwaccel drm \
-    -i "rtsps://$HOST:7441/${!t}" -an \
-    -vf "fps=$FPS,scale=$W:$H:flags=fast_bilinear" -pix_fmt yuv420p -f rawvideo pipe:1 \
-    2> >(sed -u "s/^/cam$((i+1)): /" >&2) > "$D/c$i" &
-  pids+=($!)
-  args+=(filesrc "location=$D/c$i" ! rawvideoparse format=i420 width=$W height=$H framerate=$FPS/1 \
-         ! queue max-size-buffers=4 leaky=downstream ! "mix.sink_$i")
+HOST=${UNIFI_HOST:-}
+[ -n "$HOST" ] || config_error "UNIFI_HOST is not set (see /etc/camwall/camwall.conf)"
+for t in TOKEN1 TOKEN2 TOKEN3 TOKEN4; do
+  [ -n "${!t:-}" ] || config_error "$t is not set (see /etc/camwall/camwall.conf)"
 done
 
-gst-launch-1.0 -e compositor name=mix \
-    sink_1::xpos=$W sink_2::ypos=$H sink_3::xpos=$W sink_3::ypos=$H \
-  ! video/x-raw,format=I420,width=1920,height=1080 ! kmssink driver-name=vc4 sync=false \
-  "${args[@]}" &
-gst=$!
+W=${TILE_WIDTH:-960}; H=${TILE_HEIGHT:-540}
+FPS=${FPS:-15}
+PROBE=${DISPLAY_PROBE-ddcutil --syslog never getvcp d6}
+PROBE_INTERVAL=${PROBE_INTERVAL:-5}; PROBE_FAILS=${PROBE_FAILS:-3}; PROBE_SETTLE=${PROBE_SETTLE:-3}
+STREAM_TIMEOUT=${STREAM_TIMEOUT:-10}
+int_in TILE_WIDTH "$W" 64 3840;               W=$((10#$W))
+int_in TILE_HEIGHT "$H" 64 3840;              H=$((10#$H))
+(( W % 2 == 0 )) || config_error "TILE_WIDTH must be even (got $W)"
+(( H % 2 == 0 )) || config_error "TILE_HEIGHT must be even (got $H)"
+int_in FPS "$FPS" 1 100;                     FPS=$((10#$FPS))
+int_in PROBE_INTERVAL "$PROBE_INTERVAL" 1 3600; PROBE_INTERVAL=$((10#$PROBE_INTERVAL))
+int_in PROBE_FAILS "$PROBE_FAILS" 1 100;     PROBE_FAILS=$((10#$PROBE_FAILS))
+int_in PROBE_SETTLE "$PROBE_SETTLE" 0 600;   PROBE_SETTLE=$((10#$PROBE_SETTLE))
+int_in STREAM_TIMEOUT "$STREAM_TIMEOUT" 1 300; STREAM_TIMEOUT=$((10#$STREAM_TIMEOUT))
 
-wait -n "${pids[@]}" "$gst"   # needs bash >= 5.1
-echo "a child exited (rc=$?), exiting so systemd restarts the wall" >&2
-exit 1
+# Intentionally unquoted: DISPLAY_PROBE is a command line.
+if [ -z "$PROBE" ] || [ "$PROBE" = none ]; then
+  display_on() { :; }
+elif ! command -v "${PROBE%% *}" >/dev/null; then
+  log "display probe '${PROBE%% *}' not found, running without display detection"
+  display_on() { :; }
+else
+  display_on() { timeout 10 $PROBE >/dev/null 2>&1; }
+fi
+
+# Startup checks. Missing tools are fatal; a missing hardware decoder only warns,
+# because H.265 then still works in software, just with far more CPU.
+hevc_dev=
+preflight() {
+  local c n
+  for c in ffmpeg gst-launch-1.0; do
+    command -v "$c" >/dev/null || { log "preflight: $c is not installed"; exit 1; }
+  done
+  for n in /sys/class/video4linux/video*; do
+    [ "$(cat "$n/name" 2>/dev/null)" = rpi-hevc-dec ] && { hevc_dev=/dev/${n##*/}; break; }
+  done
+  if [ -z "$hevc_dev" ]; then
+    log "preflight: no rpi-hevc-dec V4L2 device found, H.265 will be decoded in software"
+  elif ! [ -r "$hevc_dev" ] || ! [ -w "$hevc_dev" ]; then
+    log "preflight: $hevc_dev is not accessible to $(id -un) (needs group video/render), decoding will fall back to software"
+  fi
+  ffmpeg -hide_banner -hwaccels 2>/dev/null | grep -qx drm ||
+    log "preflight: this ffmpeg has no drm hwaccel, decoding will be in software"
+}
+
+# After the wall has been up for a while, each ffmpeg should hold the decoder node
+# open. One that does not is decoding in software (expected for an H.264 camera).
+holds_dev() { local fd; for fd in /proc/$1/fd/*; do [ "$(readlink "$fd" 2>/dev/null)" = "$2" ] && return 0; done; return 1; }
+check_hwdec() {
+  local i
+  [ -n "$hevc_dev" ] || return 0
+  for i in 0 1 2 3; do
+    holds_dev "${pids[$i]}" "$hevc_dev" ||
+      log "cam$((i+1)): ffmpeg does not hold $hevc_dev, decoding is probably in software (expected for an H.264 camera)"
+  done
+}
+
+preflight
+
+D=
+trap 'kill $(jobs -p) 2>/dev/null; [ -n "$D" ] && rm -rf "$D"' EXIT
+trap 'exit 143' INT TERM
+
+pids=(); gst=
+start_wall() {
+  # Under systemd the FIFOs live in RuntimeDirectory=camwall (/run/camwall);
+  # run by hand, fall back to a temporary directory.
+  if [ -n "${RUNTIME_DIRECTORY:-}" ]; then
+    D=${RUNTIME_DIRECTORY%%:*}/fifos
+    rm -rf "$D"; mkdir -m 0700 "$D" || { log "cannot create $D"; exit 1; }
+  else
+    D=$(mktemp -d) || { log "cannot create temporary directory"; exit 1; }
+  fi
+  pids=(); local args=() i t
+  for i in 0 1 2 3; do
+    t=TOKEN$((i+1))
+    mkfifo "$D/c$i" || { log "cannot create FIFO for cam$((i+1))"; exit 1; }
+    ffmpeg -nostdin -loglevel error -rtsp_transport tcp -hwaccel drm \
+      -timeout $((STREAM_TIMEOUT * 1000000)) \
+      -i "rtsps://$HOST:7441/${!t}" -an \
+      -vf "fps=$FPS,scale=$W:$H:flags=fast_bilinear" -pix_fmt yuv420p -f rawvideo pipe:1 \
+      2> >(sed -u "s/^/cam$((i+1)): /" >&2) > "$D/c$i" &
+    pids+=($!)
+    args+=(filesrc "location=$D/c$i" ! rawvideoparse format=i420 width=$W height=$H framerate=$FPS/1 \
+           ! queue max-size-buffers=4 leaky=downstream ! "mix.sink_$i")
+  done
+
+  gst-launch-1.0 -e compositor name=mix \
+      sink_1::xpos=$W sink_2::ypos=$H sink_3::xpos=$W sink_3::ypos=$H \
+    ! video/x-raw,format=I420,width=$((2*W)),height=$((2*H)) ! kmssink driver-name=vc4 sync=false \
+    "${args[@]}" &
+  gst=$!
+}
+
+stop_wall() {
+  kill "${pids[@]}" "$gst" 2>/dev/null
+  wait "${pids[@]}" "$gst" 2>/dev/null
+  rm -rf "$D"; D=
+}
+
+while :; do
+  waited=
+  until display_on; do
+    [ -n "$waited" ] || log "no display detected, idle until it returns"
+    waited=1; nap "$PROBE_INTERVAL"
+  done
+  [ -z "$waited" ] || { log "display detected, starting the wall in ${PROBE_SETTLE}s"; nap "$PROBE_SETTLE"; }
+
+  start_wall
+  fails=0; up=0; hw_checked=
+  while :; do
+    sleep "$PROBE_INTERVAL" & tick=$!
+    wait -n -p who "${pids[@]}" "$gst" "$tick"   # needs bash >= 5.1
+    rc=$?
+    if [ "$who" != "$tick" ]; then
+      log "a child exited (rc=$rc), exiting so systemd restarts the wall"
+      exit 1
+    fi
+    up=$((up + PROBE_INTERVAL))
+    [ -n "$hw_checked" ] || (( up < 10 )) || { hw_checked=1; check_hwdec; }
+    if display_on; then
+      fails=0
+    elif (( ++fails >= PROBE_FAILS )); then
+      log "display lost ($fails failed probes), stopping the wall"
+      break
+    fi
+  done
+  stop_wall
+done

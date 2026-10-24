@@ -2,6 +2,7 @@
 *.env
 !*.env.example
 tokens.env
+camwall.conf
 
 # Backups and editor leftovers
 *.bak
