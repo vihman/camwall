@@ -4,6 +4,10 @@
 tokens.env
 camwall.conf
 
+# Local working notes (environment details, not for the public repo)
+CLAUDE.md
+HANDOFF.md
+
 # Backups and editor leftovers
 *.bak
 *~
