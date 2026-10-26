@@ -9,9 +9,9 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
 ## Phase 2: Roll out camwalld and test it on the Pi
 
 - [x] Rolled out 2026-10-26: camwalld runs the plane wall, and a second `./install.sh` reports `camwall-planes` as up to date, so the build is reproducible.
-- [ ] Boot tests:
-  - boot with the monitor on: the wall comes up with no login, `camwall-planes` runs as `camwall`, and Wi-Fi stays off (`sudo ss -tnp | grep :7441` shows the Ethernet address)
-  - boot with the monitor off: the journal says `no display detected`, with no `camwall-planes` process and no `:7441` session. After plugging the monitor in, all four tiles appear at full size, and `sudo cat /sys/kernel/debug/dri/1/state` shows the CRTC at 1920x1080, not the 1024x768 fallback. This also exercises the untested black-primary fallback.
+- [x] Boot tests passed 2026-10-26:
+  - **Monitor on:** the wall starts about 1 s after the service, with no login, as user `camwall`.
+  - **Monitor off:** `no display detected (Display not found)`, and no wall runs. After plugging the monitor in, the daemon starts the wall, which sets 1920x1080 itself, and all four cameras stream. The 1024x768 cropping of the GStreamer wall cannot happen, because the plane wall sets the monitor's preferred mode rather than using the console's.
 - [ ] Under the daemon:
   - a plug cut stops the wall after about 15 s, and restoring power brings it back
   - a dead camera still blanks only its own tile
