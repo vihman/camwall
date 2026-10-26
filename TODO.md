@@ -32,7 +32,7 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
 
 ## Phase 2b: C helper improvements
 
-- [ ] Split done (2026-10-26): `planes/{common.h,stream.c,display.c,main.c}`, `Stream`/`Tile`/`PlaneProps`, `Makefile`. Compiled locally against Debian's headers without warnings; still to verify on the Pi: same CPU, all four tiles, a dead camera.
+- [x] Split `planes/` into `common.h`, `stream.c`, `display.c`, `main.c` and a `Makefile`, with separate `Stream`, `Tile` and `PlaneProps` structs (2026-10-26). No warnings with `-Wall -Wextra`. On the Pi, all four tiles stream, and restarting several cameras blanks and recovers only their own tiles.
 - [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
 - [ ] Share one hardware device context across the camera threads.
 
