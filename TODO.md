@@ -8,7 +8,7 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
 
 ## Phase 2: Roll out camwalld and test it on the Pi
 
-- [ ] Roll out: `git checkout dev && git pull && ./install.sh` on the Pi. A second `./install.sh` should report `camwall-planes` as up to date, which shows the build is reproducible. If it doesn't, compare with `cmp` before trusting the restart-on-change logic.
+- [x] Rolled out 2026-10-26: camwalld runs the plane wall, and a second `./install.sh` reports `camwall-planes` as up to date, so the build is reproducible.
 - [ ] Boot tests:
   - boot with the monitor on: the wall comes up with no login, `camwall-planes` runs as `camwall`, and Wi-Fi stays off (`sudo ss -tnp | grep :7441` shows the Ethernet address)
   - boot with the monitor off: the journal says `no display detected`, with no `camwall-planes` process and no `:7441` session. After plugging the monitor in, all four tiles appear at full size, and `sudo cat /sys/kernel/debug/dri/1/state` shows the CRTC at 1920x1080, not the 1024x768 fallback. This also exercises the untested black-primary fallback.
@@ -68,6 +68,7 @@ Design in [docs/design.md](docs/design.md#planned-home-assistant-integration).
 
 ## Before production
 
+- [ ] Replace the SD card (an unbranded 8 GB card) with a branded high-endurance one. After an unclean shutdown, 8 library files from 6 packages failed `dpkg --verify`. One of them, `libXrandr`, stopped `ddcutil` from starting. The packages were reinstalled on 2026-10-26. Until the card is replaced, re-check with `sudo dpkg --verify 2>/dev/null | grep -v ' c /'` now and then; only `g_ether.conf` is expected.
 - [ ] Regenerate all four RTSP tokens in Protect and update `/etc/camwall/camwall.conf`.
 
 ## GStreamer wall (fallback only)
