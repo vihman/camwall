@@ -8,6 +8,8 @@
  *
  * Environment: UNIFI_HOST, TOKEN1..TOKEN4 (as in /etc/camwall/camwall.conf)
  * Optional:    CAMS (1..4, default 4), WALL_FPS (display tick, default 30)
+ * Missing configuration exits with 78 (EX_CONFIG); camwalld does not restart on it.
+ * Normally started by camwalld (bin/camwalld), built and installed by install.sh.
  *
  * Build: gcc -O2 -Wall -o camwall-planes camwall-planes.c \
  *          $(pkg-config --cflags --libs libdrm libavformat libavcodec libavutil) -lpthread
@@ -530,12 +532,12 @@ int main(void)
 
     if ((e = getenv("CAMS")) && atoi(e) >= 1 && atoi(e) <= MAXCAM) g_ncam = atoi(e);
     if ((e = getenv("WALL_FPS")) && atoi(e) >= 1 && atoi(e) <= 60) fps = atoi(e);
-    if (!host || !*host) { fprintf(stderr, "UNIFI_HOST not set\n"); return 2; }
+    if (!host || !*host) { fprintf(stderr, "UNIFI_HOST not set\n"); return 78; }
     for (int i = 0; i < g_ncam; i++) {
         char var[16];
         snprintf(var, sizeof var, "TOKEN%d", i + 1);
         const char *tok = getenv(var);
-        if (!tok || !*tok) { fprintf(stderr, "%s not set\n", var); return 2; }
+        if (!tok || !*tok) { fprintf(stderr, "%s not set\n", var); return 78; }
         Cam *c = &g_cam[i];
         c->idx = i;
         snprintf(c->name, sizeof c->name, "cam%d", i + 1);

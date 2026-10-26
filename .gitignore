@@ -8,6 +8,11 @@ camwall.conf
 CLAUDE.md
 HANDOFF.md
 
+# Build output and test leftovers
+planes/camwall-planes
+planes/soak.sh
+*.log
+
 # Backups and editor leftovers
 *.bak
 *~

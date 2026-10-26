@@ -1,6 +1,10 @@
 #!/bin/bash
 # camwall - 2x2 wall of UniFi Protect RTSPS streams on a Raspberry Pi 4 (KMS/DRM, no desktop).
 #
+# The GStreamer wall, used with WALL=gstreamer. Normally started by camwalld, which
+# does the display probing itself and runs this with DISPLAY_PROBE=none; it also
+# works on its own.
+#
 # Each camera: ffmpeg (hardware HEVC decode, scale) -> raw I420 frames -> FIFO
 # All four:    GStreamer filesrc -> rawvideoparse -> compositor -> kmssink
 #

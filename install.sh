@@ -33,10 +33,13 @@ SVC_GROUPS=(video render i2c)
 CONF_DIR=/etc/camwall
 CONF=$CONF_DIR/camwall.conf
 OLD_CONF=$CONF_DIR/tokens.env   # name used before camwall.conf
-BIN=/usr/local/bin/camwall
+BIN=/usr/local/bin/camwall          # the GStreamer wall (WALL=gstreamer)
+DAEMON=/usr/local/bin/camwalld      # supervisor, started by the unit
+PLANES=/usr/local/bin/camwall-planes  # the plane wall (WALL=planes, default)
 UNIT=/etc/systemd/system/camwall.service
 PACKAGES=(ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
-          gstreamer1.0-plugins-bad v4l-utils libdrm-tests ddcutil)
+          gstreamer1.0-plugins-bad v4l-utils libdrm-tests ddcutil python3
+          gcc pkg-config libdrm-dev libavformat-dev libavcodec-dev libavutil-dev)
 
 changed=0; file_changed=0
 say() { echo "==> $*"; }
@@ -121,7 +124,22 @@ else
   fi
 fi
 
-# --- script and unit --------------------------------------------------------
+# --- build the plane wall ---------------------------------------------------
+# Built outside the checkout so no root-owned files end up in it.
+BUILD=$(mktemp -d); trap 'rm -rf "$BUILD"' EXIT
+if [ "$DRY" = 1 ] && ! pkg-config --exists libdrm libavformat libavcodec libavutil 2>/dev/null; then
+  echo "    + build camwall-planes (skipped in dry run: build packages not installed)"
+  cp "$SRC/planes/camwall-planes.c" "$BUILD/camwall-planes"   # stand-in so the compare below runs
+else
+  say "building camwall-planes"
+  # shellcheck disable=SC2046  # pkg-config output is a word list
+  gcc -O2 -Wall -o "$BUILD/camwall-planes" "$SRC/planes/camwall-planes.c" \
+      $(pkg-config --cflags --libs libdrm libavformat libavcodec libavutil) -lpthread
+fi
+
+# --- scripts, binary and unit -----------------------------------------------
+install_file 0755 "$SRC/bin/camwalld" "$DAEMON"
+install_file 0755 "$BUILD/camwall-planes" "$PLANES"
 install_file 0755 "$SRC/bin/camwall" "$BIN"
 install_file 0644 "$SRC/systemd/camwall.service" "$UNIT"
 [ "$file_changed" = 0 ] || run systemctl daemon-reload

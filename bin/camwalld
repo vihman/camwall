@@ -1,0 +1,224 @@
+#!/usr/bin/python3
+"""camwalld - control daemon for the camwall camera wall (systemd Type=notify).
+
+Runs the wall as a child process while a display answers the presence probe, and
+stops it while the monitor has no power. No video passes through this process.
+
+  WALL=planes     /usr/local/bin/camwall-planes: hardware decode straight onto
+                  display planes (default)
+  WALL=gstreamer  /usr/local/bin/camwall: the ffmpeg + GStreamer wall (fallback)
+
+Configuration comes from the environment (systemd EnvironmentFile):
+  UNIFI_HOST, TOKEN1..TOKEN4   required; passed to the wall in its environment
+  WALL                         planes or gstreamer (default planes)
+  DISPLAY_PROBE                command that succeeds while the monitor is powered
+                               (default "ddcutil --syslog never getvcp d6"; "none" disables)
+  PROBE_INTERVAL               seconds between probes (default 5)
+  PROBE_FAILS                  consecutive failed probes before the wall stops (default 3)
+  PROBE_SETTLE                 seconds to wait after the display returns (default 3)
+The GStreamer wall reads its own settings (FPS, TILE_*, STREAM_TIMEOUT) itself.
+
+A configuration error exits with 78 (EX_CONFIG), which the unit does not restart on.
+A wall that exits is restarted here with backoff; a wall that exits with 78 makes
+this daemon exit with 78 too.
+"""
+
+import os
+import shlex
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+EX_CONFIG = 78
+BIN_DIR = os.environ.get("CAMWALL_BIN_DIR", "/usr/local/bin")   # override for testing
+WALLS = {"planes": "camwall-planes", "gstreamer": "camwall"}
+BACKOFF = (2, 4, 8, 16, 30)   # seconds before restarting a wall that exited
+HEALTHY = 60                  # a wall that ran this long resets the backoff
+STOP_GRACE = 10               # seconds between SIGTERM and SIGKILL
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+def config_error(msg):
+    log(f"camwalld: {msg}")
+    sys.exit(EX_CONFIG)
+
+
+def int_in(name, default, lo, hi):
+    """A whole number from the environment, within [lo, hi]."""
+    raw = os.environ.get(name, "") or str(default)
+    if not raw.isdigit() or not lo <= int(raw) <= hi:
+        config_error(f"{name} must be a whole number from {lo} to {hi} (got '{raw}')")
+    return int(raw)
+
+
+def notify(msg):
+    """sd_notify(3) without libsystemd: one datagram to $NOTIFY_SOCKET."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC) as s:
+            s.connect(addr)
+            s.sendall(msg.encode())
+    except OSError as e:
+        log(f"sd_notify failed: {e}")
+
+
+class Config:
+    def __init__(self):
+        if not os.environ.get("UNIFI_HOST"):
+            config_error("UNIFI_HOST is not set (see /etc/camwall/camwall.conf)")
+        for i in range(1, 5):
+            if not os.environ.get(f"TOKEN{i}"):
+                config_error(f"TOKEN{i} is not set (see /etc/camwall/camwall.conf)")
+        self.wall = os.environ.get("WALL", "") or "planes"
+        if self.wall not in WALLS:
+            config_error(f"WALL must be one of {', '.join(WALLS)} (got '{self.wall}')")
+        self.wall_cmd = os.path.join(BIN_DIR, WALLS[self.wall])
+        if not os.access(self.wall_cmd, os.X_OK):
+            config_error(f"{self.wall_cmd} is missing or not executable (run install.sh)")
+        self.interval = int_in("PROBE_INTERVAL", 5, 1, 3600)
+        self.fails = int_in("PROBE_FAILS", 3, 1, 100)
+        self.settle = int_in("PROBE_SETTLE", 3, 0, 600)
+        probe = os.environ.get("DISPLAY_PROBE", "ddcutil --syslog never getvcp d6")
+        self.probe = shlex.split(probe) if probe not in ("", "none") else None
+        if self.probe and not shutil.which(self.probe[0]):
+            log(f"display probe '{self.probe[0]}' not found, running without display detection")
+            self.probe = None
+
+
+class Wall:
+    """The wall as a child process in its own process group."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.proc = None
+        self.started = 0.0
+
+    def start(self):
+        env = dict(os.environ)
+        env["DISPLAY_PROBE"] = "none"   # the GStreamer wall must not probe on its own
+        self.proc = subprocess.Popen([self.cfg.wall_cmd], env=env, start_new_session=True,
+                                     stdin=subprocess.DEVNULL)
+        self.started = time.monotonic()
+        log(f"started the {self.cfg.wall} wall (pid {self.proc.pid})")
+
+    def exited(self):
+        """Exit status if the wall has exited, else None."""
+        return None if self.proc is None else self.proc.poll()
+
+    def uptime(self):
+        return time.monotonic() - self.started
+
+    def stop(self):
+        if self.proc is None:
+            return
+        if self.proc.poll() is None:
+            self._signal(signal.SIGTERM)
+            try:
+                self.proc.wait(STOP_GRACE)
+            except subprocess.TimeoutExpired:
+                log("wall did not stop, killing it")
+                self._signal(signal.SIGKILL)
+                self.proc.wait()
+        self._signal(signal.SIGKILL)   # leftovers in the group, e.g. ffmpeg
+        self.proc = None
+
+    def _signal(self, sig):
+        try:
+            os.killpg(self.proc.pid, sig)
+        except ProcessLookupError:
+            pass
+
+
+class Stop(Exception):
+    pass
+
+
+def main():
+    cfg = Config()
+
+    def on_term(signum, frame):
+        raise Stop
+    signal.signal(signal.SIGTERM, on_term)
+    signal.signal(signal.SIGINT, on_term)
+
+    def display_on():
+        if cfg.probe is None:
+            return True
+        try:
+            return subprocess.run(cfg.probe, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, timeout=10).returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+
+    def status(msg):
+        notify(f"STATUS={msg}")
+
+    wall = Wall(cfg)
+    notify("READY=1")
+    log(f"camwalld: {cfg.wall} wall, display probe "
+        f"{'off' if cfg.probe is None else repr(shlex.join(cfg.probe))}")
+
+    present = None        # None until the first probe
+    fails = 0
+    restarts = 0
+    restart_at = 0.0      # monotonic time when an exited wall may start again
+    next_probe = 0.0
+    try:
+        while True:
+            notify("WATCHDOG=1")
+            now = time.monotonic()
+
+            if now >= next_probe:
+                next_probe = now + cfg.interval
+                if display_on():
+                    fails = 0
+                    if present is False:
+                        log(f"display detected, starting the wall in {cfg.settle}s")
+                        restart_at = max(restart_at, now + cfg.settle)
+                    present = True
+                else:
+                    fails += 1
+                    if present is None or (present and fails >= cfg.fails):
+                        if wall.proc is not None:
+                            log(f"display lost ({fails} failed probes), stopping the wall")
+                            wall.stop()
+                        log("no display detected, idle until it returns")
+                        status("no display, idle")
+                        present = False
+
+            rc = wall.exited()
+            if rc is not None:
+                if rc == EX_CONFIG:
+                    log("the wall reported a configuration error")
+                    sys.exit(EX_CONFIG)
+                if wall.uptime() >= HEALTHY:
+                    restarts = 0
+                delay = BACKOFF[min(restarts, len(BACKOFF) - 1)]
+                restarts += 1
+                log(f"the wall exited (status {rc}), restarting in {delay}s")
+                status(f"wall exited (status {rc}), restarting in {delay}s")
+                wall.stop()   # clears leftovers in its process group
+                restart_at = time.monotonic() + delay
+
+            if present and wall.proc is None and time.monotonic() >= restart_at:
+                wall.start()
+                status(f"{cfg.wall} wall running")
+
+            time.sleep(1)
+    except Stop:
+        notify("STOPPING=1")
+        wall.stop()
+
+
+if __name__ == "__main__":
+    main()
