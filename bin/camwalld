@@ -202,7 +202,7 @@ def main():
                     fails = 0
                     if present is False:
                         log(f"display detected, starting the wall in {cfg.settle}s")
-                        restart_at = max(restart_at, now + cfg.settle)
+                        restart_at = max(restart_at, time.monotonic() + cfg.settle)   # after the (slow) probe
                     present = True
                 else:
                     fails += 1
