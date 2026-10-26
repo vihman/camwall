@@ -12,12 +12,12 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
 - [x] Boot tests passed 2026-10-26:
   - **Monitor on:** the wall starts about 1 s after the service, with no login, as user `camwall`.
   - **Monitor off:** `no display detected (Display not found)`, and no wall runs. After plugging the monitor in, the daemon starts the wall, which sets 1920x1080 itself, and all four cameras stream. The 1024x768 cropping of the GStreamer wall cannot happen, because the plane wall sets the monitor's preferred mode rather than using the console's.
-- [ ] Under the daemon:
-  - a plug cut stops the wall after about 15 s, and restoring power brings it back
-  - a dead camera still blanks only its own tile
-  - no permission errors under the unit's hardening
-  - the watchdog restarts a stopped daemon (`sudo systemctl kill -s STOP --kill-whom=main camwall`)
-  - `WALL=gstreamer` switches to the fallback and back
+- [x] Under the daemon, passed 2026-10-26:
+  - **Plug cut while running:** `display lost` after about 15 s, the wall stops, and it returns when power does. `PROBE_SETTLE` is now counted from the end of the slow ddcutil probe.
+  - **Watchdog:** a frozen daemon (`systemctl kill -s STOP --kill-whom=main`) is restarted by systemd about 34 s later (30 s watchdog plus 3 s restart delay).
+  - **Fallback:** `WALL=gstreamer` runs the GStreamer wall, and removing it switches back.
+- [ ] Still to check under the daemon:
+  - a dead camera blanks only its own tile (passed when run by hand, not yet under camwalld)
   - no false `display lost` with the monitor on over a day (`journalctl -u camwall | grep -c 'display lost'`). If there are any, raise `PROBE_FAILS` or add `--sleep-multiplier` to the probe.
 - [ ] Memory: confirm that the dawn step in the overnight run (+2.5 MB process memory, -6.5 MB CMA) does not repeat on every dusk and dawn. Log process memory and `CmaFree` every 5 min over at least one full day.
 - [ ] Restrict devices: check the `char-*` class names in `/proc/devices` (drm, video4linux, media, dma_heap, i2c), add `DevicePolicy=closed` + `DeviceAllow=` to the unit, and test both walls.
