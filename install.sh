@@ -129,11 +129,11 @@ fi
 BUILD=$(mktemp -d); trap 'rm -rf "$BUILD"' EXIT
 if [ "$DRY" = 1 ] && ! pkg-config --exists libdrm libavformat libavcodec libavutil 2>/dev/null; then
   echo "    + build camwall-planes (skipped in dry run: build packages not installed)"
-  cp "$SRC/planes/camwall-planes.c" "$BUILD/camwall-planes"   # stand-in so the compare below runs
+  cat "$SRC"/planes/*.c > "$BUILD/camwall-planes"   # stand-in so the compare below runs
 else
   say "building camwall-planes"
   # shellcheck disable=SC2046  # pkg-config output is a word list
-  gcc -O2 -Wall -o "$BUILD/camwall-planes" "$SRC/planes/camwall-planes.c" \
+  gcc -O2 -Wall -o "$BUILD/camwall-planes" "$SRC"/planes/*.c \
       $(pkg-config --cflags --libs libdrm libavformat libavcodec libavutil) -lpthread
 fi
 

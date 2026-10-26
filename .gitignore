@@ -10,6 +10,7 @@ HANDOFF.md
 
 # Build output and test leftovers
 planes/camwall-planes
+planes/*.o
 planes/soak.sh
 *.log
 

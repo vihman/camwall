@@ -32,12 +32,7 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
 
 ## Phase 2b: C helper improvements
 
-- [ ] Split `planes/camwall-planes.c` for readability:
-  - files: `stream.c` (RTSPS and decode), `display.c` (KMS planes and atomic commit), `main.c` (config and the frame-moving loop), plus a `Makefile`
-  - split the mixed `Cam` struct into `Stream` and `Tile`
-  - group the plane property IDs into one `PlaneProps` struct
-  
-  No behaviour change. Verify with the same CPU and dead-camera tests.
+- [ ] Split done (2026-10-26): `planes/{common.h,stream.c,display.c,main.c}`, `Stream`/`Tile`/`PlaneProps`, `Makefile`. Compiled locally against Debian's headers without warnings; still to verify on the Pi: same CPU, all four tiles, a dead camera.
 - [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
 - [ ] Share one hardware device context across the camera threads.
 

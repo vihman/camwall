@@ -105,7 +105,8 @@ A dead camera only blanks its own tile; the wall reconnects it by itself. If the
 
 ```text
 bin/camwalld                   the daemon run by the unit (installed to /usr/local/bin/camwalld)
-planes/camwall-planes.c        the plane wall, built by install.sh (/usr/local/bin/camwall-planes)
+planes/                        the plane wall in C, built by install.sh (/usr/local/bin/camwall-planes):
+                                 stream.c (RTSPS + decode), display.c (KMS planes), main.c, Makefile
 bin/camwall                    the GStreamer wall, the fallback (/usr/local/bin/camwall)
 systemd/camwall.service        the service unit
 config/camwall.conf.example    template for /etc/camwall/camwall.conf (secrets live only there)

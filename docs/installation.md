@@ -68,7 +68,7 @@ Upgrading from a version that used `/etc/camwall/tokens.env`: `install.sh` moves
 ## 6. Build the plane wall, install the programs and the unit, then start
 
 ```bash
-gcc -O2 -Wall -o /tmp/camwall-planes planes/camwall-planes.c \
+gcc -O2 -Wall -o /tmp/camwall-planes planes/*.c \
   $(pkg-config --cflags --libs libdrm libavformat libavcodec libavutil) -lpthread
 sudo install -m 0755 -o root -g root /tmp/camwall-planes /usr/local/bin/camwall-planes
 sudo install -m 0755 -o root -g root bin/camwalld /usr/local/bin/camwalld

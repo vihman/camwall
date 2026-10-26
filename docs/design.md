@@ -2,13 +2,13 @@
 
 ## The plane wall
 
-`planes/camwall-planes.c`, installed as `/usr/local/bin/camwall-planes` and run by camwalld (`WALL=planes`, the default). Goal: no CPU in the pixel path. Each camera is decoded by the hardware into DRM_PRIME frames and put on its own display overlay plane; the display controller (HVS) scales and composes at scanout.
+`planes/` (`stream.c`: RTSPS and hardware decode; `display.c`: KMS planes and atomic commits; `main.c`: configuration and the loop that moves frames from streams to tiles), installed as `/usr/local/bin/camwall-planes` and run by camwalld (`WALL=planes`, the default). Goal: no CPU in the pixel path. Each camera is decoded by the hardware into DRM_PRIME frames and put on its own display overlay plane; the display controller (HVS) scales and composes at scanout.
 
 Verified on the reference Pi:
 
 - `modetest -M vc4 -p`: HDMI-A-1 uses CRTC 102 (primary plane 91, cursor plane 688). 16 overlay planes (ids 127..292) are available to it. Every plane lists NV12 with BROADCOM_SAND128/64/256 and linear. The CRTC has a writable `BACKGROUND_COLOR` (opaque black).
 - `ffmpeg -hwaccel drm -hwaccel_output_format drm_prime -f vout_drm -` shows one stream with a clean picture, so ffmpeg passes the SAND geometry correctly (unlike `v4l2slh265dec ! kmssink`). `-hwaccel_output_format drm_prime` is required, otherwise `vout_drm` rejects the frame.
-- `camwall-planes.c` compiles without warnings on the Pi (libdrm-dev 2.4.134, libav*-dev 7.1.5+rpt2 from the Pi archive) and ran with one and then all four cameras, with all four pictures shown and no error lines.
+- The program compiles without warnings on the Pi (libdrm-dev 2.4.134, libav*-dev 7.1.5+rpt2 from the Pi archive) and ran with one and then all four cameras, with all four pictures shown and no error lines.
 
 How it works: one thread per camera (libavformat RTSPS over TCP, hardware HEVC decode, DRM_PRIME frames, newest frame wins); the main thread imports frames as DRM framebuffers and commits atomic updates on a 30 fps tick (`WALL_FPS`); a stale or down stream (no frame for 3 s) disables only its plane, so that tile shows the black CRTC background while the others keep running. Each camera reconnects by itself with a growing delay. Tokens come from the environment, never argv. A missing `UNIFI_HOST` or token exits with 78. `install.sh` builds it (`gcc` against Pi OS's libdrm and libav, which carry the Pi's V4L2 request and SAND support; upstream FFmpeg cannot do this yet).
 
