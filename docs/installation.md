@@ -92,7 +92,7 @@ Then reboot once (`sudo reboot`) and confirm the wall comes up without anybody l
 ffmpeg's `-hwaccel` option can fall back to software decoding silently, so check it instead of assuming. On the reference Pi, with the wall running as the `camwall` service, the hardware decoder was confirmed in use:
 
 - **Decoder device held open.** `fuser -v /dev/video19` listed all four ffmpeg processes. That is the node the script's own check looks at. ffmpeg itself reports the decoder as `/dev/media2,/dev/video19`, so the media node number differs between Pis and boots and is not needed for the check.
-- **Decoder interrupts.** The interrupt counter of the HEVC decoder (IRQ `feb00000.codec`) rose by about 1200 in 5 seconds (roughly 240 per second) while the wall decoded 4 cameras at 15 fps, which is 60 frames per second in total.
+- **Decoder interrupts.** The interrupt counter of the HEVC decoder (IRQ `feb00000.codec`) rose by about 1200 in 5 seconds (roughly 240 per second) with four cameras. The decoder probably raises two interrupts per frame (it works in two stages), so this is about 120 frames per second in total: each camera's full 30 fps. ffmpeg decodes every frame; the wall's `fps=` filter drops frames only after the decoder, so the count does not depend on `FPS`. The plane wall gives the same count.
 - **CPU cost.** Four concurrent streams cost about 1.9-2.0 s of CPU time per camera over a ~9.5 s run with `-hwaccel drm`, against 4.3-4.9 s without it.
 - **Kernel driver message.** `dmesg` showed a line from the decoder's kernel driver (`rpi-hevc-dec feb00000.codec: Missing inuse DPB ent 0, timestamp=0`) at the start of the hardware-decode runs that were checked, and not during software-decode runs.
 

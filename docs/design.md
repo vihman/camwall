@@ -26,19 +26,39 @@ Verified on the reference Pi:
 - `ffmpeg -hwaccel drm -hwaccel_output_format drm_prime -f vout_drm -` shows one stream with a clean picture, so ffmpeg passes the SAND geometry correctly (unlike `v4l2slh265dec ! kmssink`). `-hwaccel_output_format drm_prime` is required, otherwise `vout_drm` rejects the frame.
 - `camwall-planes.c` compiles without warnings on the Pi (libdrm-dev 2.4.134, libav*-dev 7.1.5+rpt2 from the Pi archive) and ran with one and then all four cameras, with all four pictures shown and no error lines. (The branch's commit message, "never run on the Pi", predates this run.)
 
-How it works: one thread per camera (libavformat RTSPS over TCP, hardware HEVC decode, DRM_PRIME frames, newest frame wins); the main thread imports frames as DRM framebuffers and commits atomic updates on a 30 fps tick (`WALL_FPS`); a stale or down stream (no frame for 3 s) disables only its plane, so that tile shows the black CRTC background while the others keep running. Each camera reconnects by itself with a growing delay. Tokens come from the environment, never argv. For now it runs by hand with the service stopped:
+How it works: one thread per camera (libavformat RTSPS over TCP, hardware HEVC decode, DRM_PRIME frames, newest frame wins); the main thread imports frames as DRM framebuffers and commits atomic updates on a 30 fps tick (`WALL_FPS`); a stale or down stream (no frame for 3 s) disables only its plane, so that tile shows the black CRTC background while the others keep running. Each camera reconnects by itself with a growing delay. Tokens come from the environment, never argv. Until it has its own unit, test it as a transient unit with the service stopped:
 
 ```bash
+gcc -O2 -Wall -o camwall-planes planes/camwall-planes.c \
+  $(pkg-config --cflags --libs libdrm libavformat libavcodec libavutil) -lpthread
+sudo install -m 0755 camwall-planes /usr/local/bin/camwall-planes
 sudo systemctl stop camwall
-sudo bash -c 'set -a; . /etc/camwall/camwall.conf; CAMS=1 exec ./camwall-planes'   # omit CAMS for all four
-sudo systemctl start camwall
+sudo systemd-run --unit=planes-test -p User=camwall -p SupplementaryGroups="video render" \
+  -p EnvironmentFile=/etc/camwall/camwall.conf /usr/local/bin/camwall-planes
+journalctl -u planes-test -f
+# back to the GStreamer wall:
+sudo systemctl stop planes-test; sudo systemctl start camwall
 ```
+
+Building needs `libdrm-dev libavformat-dev libavcodec-dev libavutil-dev gcc pkg-config`.
+
+Tested on the Pi (2026-10-26, run as user `camwall`):
+
+- **Dead camera:** one camera restarted from Protect. Only its tile went black; the other three kept running. While the camera was down, the program retried about every 12 s (10 s connection timeout plus up to 5 s backoff), logging `Connection timed out`. Once the camera was back, the stream and the tile returned by themselves, with no restart of the program.
+- **Monitor power cut and restore** (smart plug, about 30 s): the picture was back as soon as the monitor came up, with nothing in the journal. The HDMI output keeps running while the monitor is unpowered, so the program sees no interruption and needs no re-modeset. It keeps decoding while the monitor is off; stopping that is the job of the display-presence check.
+- **Device nodes in use:**
+  - `/dev/dri/card1` (display)
+  - `/dev/video19` (HEVC decoder)
+  - `/dev/media1` (the decoder's media node; its number varies between boots)
+  - `/dev/dma_heap/linux,cma` (frame buffers)
+  
+  No render node. A production unit should therefore allow device classes (`DeviceAllow=char-drm`, `char-video4linux`, `char-media`, `char-dma_heap`, plus `char-i2c` for the DDC probe) rather than node numbers. Check the class names against `/proc/devices`.
 
 Review findings and weak spots:
 
 - **Missing compared with the GStreamer wall:** no display-presence probe (it keeps decoding with the monitor off), no config validation, no tile settings, no decoder check, no systemd notify or watchdog, no per-camera health output for a supervisor.
-- **Root is probably not needed.** `kmssink` already becomes DRM master as the `camwall` user, because the first opener of the card gets master without any capability. `drmSetMaster()` failing is harmless as long as `drmIsMaster()` is true. To verify, then run it under the same sandboxed unit.
-- **Monitor power cycle:** the HDMI connector keeps reporting `connected` on a plug cut, so the flip-timeout re-modeset path is probably never triggered. Presence detection still needs DDC/CI.
+- **Root is not needed** (verified 2026-10-26). Run as user `camwall` with only the groups `video` and `render`, it gets the display and streams all four cameras. Like `kmssink`, it becomes DRM master because it is the first to open the card, which needs no extra capability. Still to test: running it with the full hardening of `camwall.service`.
+- **Monitor power cycle:** works (see above). The flip-timeout re-modeset path was not triggered and remains unexercised. Presence detection still needs DDC/CI.
 - **Guesses that happened to work or are unexercised:** the first modeset turns the primary plane off (the fallback, a black 1920x1080 dumb buffer, is untested); the DRM device path passed to FFmpeg's hwdevice creation; frame size and modifier taken from FFmpeg's descriptor. H.264 cameras are refused ("set Encoding to Enhanced").
 - **Smaller points:** it decodes every frame at the camera rate (fine in hardware, but each held frame uses CMA memory; four streams should fit, about seven is the reported Pi 4 limit); it creates one hardware device context per camera where one shared context would do.
 

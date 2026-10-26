@@ -23,13 +23,11 @@ Decision gate: Phase 2 starts only if the plane wall uses clearly less CPU, surv
   - `CmaFree`/`CmaTotal` from `/proc/meminfo`
   
   Also add `tools/check-hwdec.sh` with the decoder checks from docs/installation.md: `fuser`, the interrupt counter, the A/B benchmark.
-- [ ] Measure the plane wall with four cameras on Ethernet. The GStreamer wall's baselines (15, 24 and 30 fps) are in docs/measurements.md; 24 fps is its limit.
-- [ ] Run the plane wall as user `camwall` instead of root, to test whether DRM master works without root. With it running, list the device nodes it and the GStreamer wall open (`fuser -v /dev/dri/* /dev/video* /dev/media* /dev/dma_heap/* /dev/i2c-*`). That list also feeds `DevicePolicy=closed` + `DeviceAllow=` for both units.
-- [ ] Robustness of the plane wall:
-  - a dead camera goes black within ~3 s and recovers by itself
-  - the monitor plug cut and restore
-  - booting with the monitor off; the black-primary fallback is untested
-  - a 24 h soak logging RSS and `CmaFree` every 5 min
+- [x] The plane wall runs as user `camwall` without root, survives a dead camera (only its tile goes black, it recovers by itself) and its device nodes are listed (docs/design.md).
+- [ ] List the GStreamer wall's device nodes too (`sudo fuser -v /dev/dri/* /dev/video* /dev/media* /dev/dma_heap/* /dev/i2c-*`), and check the `char-*` class names in `/proc/devices`. Both feed `DevicePolicy=closed` + `DeviceAllow=` for the units.
+- [ ] Robustness of the plane wall (dead camera and monitor plug cut already pass, see docs/design.md):
+  - booting with the monitor off, once there is a unit that starts it at boot (Phase 2); the black-primary fallback is untested
+  - memory trend from one continuous run: compare RSS and `CmaFree` after 7 h (73.2 MB, 442.6 MB free) with a reading 10+ hours later, same pid. Stability passed 7 h overnight.
 - [ ] Latency of both walls: photograph the screen next to a reference clock.
 
 ## Phase 2: Productize the plane wall (C helper + Python daemon)

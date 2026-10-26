@@ -69,4 +69,12 @@ Power (smart-plug meter), one reading each, taken at different moments: 17 W wit
 
 ## Decode-to-plane (experimental)
 
-One stream through `ffmpeg -hwaccel drm -hwaccel_output_format drm_prime -f vout_drm -`: 97.1% idle (one sample, night/IR scene). The four-camera plane program has not been measured yet; see [TODO](../TODO.md).
+One stream through `ffmpeg -hwaccel drm -hwaccel_output_format drm_prime -f vout_drm -`: 97.1% idle (one sample, night/IR scene).
+
+`camwall-planes` with all four cameras, 2026-10-26, Ethernet, run as root (`systemd-run`), about 4 minutes after start: three 5-second samples at 93.8%, 94.2% and 93.3% idle, load average 0.40 (falling from the GStreamer wall's history), 58.9 C and falling, `get_throttled` 0x0. CMA: 512 MB total, about 439 MB free, so the decoders hold about 75 MB. The process has 70 MB resident and the system 167 threads, against 275 with the GStreamer wall. The busiest threads are the display loop (about 5% of a core) and the four camera threads (about 3% each). Picture clean, all four camera clocks advancing in step.
+
+Compared with the GStreamer wall at 24 fps on Ethernet (about 28% idle, load about 7, 73.5 C), the plane wall uses about a twelfth of the CPU, and it puts the newest frame of each camera's full stream on screen, rather than a reduced rate. The decoder's interrupt counter rose by 1206 in 5 seconds (about 241 per second). That is the same as with the GStreamer wall, because both decode every frame. At about two interrupts per frame (the decoder works in two stages), that is about 30 fps per camera. The display updates on its own 30 Hz tick, so a frame can occasionally be skipped.
+
+Overnight run, 2026-10-26, as user `camwall`: 7 hours without a restart or any journal line after a deliberate camera restart at the start. After 7 hours, 73.2 MB resident (about 70 MB shortly after an earlier start), CMA about 443 MB free (about 449 MB in the earlier run), 55.0 C, load average 0.4. No sign of a leak. The start values come from a different run of the program, so a trend from one continuous run is still to be confirmed.
+
+So lowering `FPS` on the GStreamer wall never reduced decoding. It only reduced the copying, scaling and composing after the decoder, which is where that wall's CPU goes.
