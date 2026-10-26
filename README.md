@@ -1,25 +1,26 @@
 # camwall
 
-A 2x2 wall of four UniFi Protect camera streams on a Raspberry Pi 4, running Raspberry Pi OS Lite (no desktop) and rendering straight to the display through KMS/DRM. Hardware HEVC decode, GStreamer composition, managed by systemd, everything done over SSH. The wall stops itself while the monitor has no power and starts again when it returns.
+A 2x2 wall of four UniFi Protect camera streams on a Raspberry Pi 4, running Raspberry Pi OS Lite (no desktop) and rendering straight to the display through KMS/DRM. The Pi's HEVC hardware decodes the streams and the display controller scales and composes them, so the CPU never touches a pixel. A small daemon under systemd runs the wall, stops it while the monitor has no power and starts it again when the monitor returns. Everything is done over SSH.
 
 Written with the help of Claude Sonnet 5.5
 
-> **Highlight: hardware H.265 decoding on a Pi 4.** The four 1280x720 H.265 streams are decoded by the Pi 4's own HEVC block (`rpi-hevc-dec`) and not by the CPU. Stock ffmpeg with `-hwaccel drm` drives it correctly. This is the part that was hard to get working: the obvious GStreamer route (`v4l2slh265dec`) decodes, but its output cannot be displayed correctly on GStreamer 1.26.2, so the wall uses ffmpeg for decoding and GStreamer only for composition and display.
+> **Highlight: no CPU in the pixel path.** Each camera's 1280x720 H.265 stream is decoded by the Pi 4's HEVC block (`rpi-hevc-dec`) into frames that stay in the decoder's own tiled memory format. Each frame goes straight onto one of the display controller's overlay planes, and the controller scales and composes them as it scans out. Four cameras at their full 30 fps use about 6% of the CPU (94% idle) and run at about 55 C.
 >
-> Measured per camera, decode only: about 20% of one CPU core with the hardware decoder, against about 48% in software.
->
-> Only the decode runs in hardware. Scaling to 960x540, the conversion to linear frames, the 1080p composition and the copy to the display are CPU work, which limits the wall to about 15-20 fps. An experimental decode-to-plane version (branch `drm-planes`) removes the CPU from the pixel path; see [Design notes](docs/design.md#decode-to-plane-experimental).
+> The older design, ffmpeg decode followed by CPU scaling and GStreamer composition, needed about 72% of the CPU at 24 fps and could not reach 30 fps. It is kept as a fallback (`WALL=gstreamer`). See [Measurements](docs/measurements.md) for both.
 
 ```text
 camera 1..4 (RTSPS from the UniFi gateway)
    |
-   |  one ffmpeg per camera: hardware H.265 decode (rpi-hevc-dec), scale to 960x540, raw I420 frames
+   |  camwall-planes, one thread per camera: RTSPS -> hardware H.265 decode (rpi-hevc-dec)
+   |  -> DRM_PRIME frame (NV12, Broadcom SAND tiling), newest frame wins
    v
-four FIFOs
+four overlay planes on the HDMI output: the display controller scales 1280x720 -> 960x540
+and composes the 2x2 wall at scanout (atomic KMS)
    |
-   |  GStreamer: filesrc -> rawvideoparse -> leaky queue -> compositor (1920x1080) -> kmssink
    v
 HDMI monitor
+
+camwalld (systemd, Type=notify, watchdog): starts/stops camwall-planes on the DDC/CI display probe
 ```
 
 ## Tested configuration
@@ -35,7 +36,7 @@ HDMI monitor
 | Cameras | UniFi G6-series cameras, Encoding set to Enhanced, all send H.265 on RTSP |
 | Gateway | UniFi Cloud Gateway running Protect, RTSPS on port 7441 |
 
-A camera on Standard encoding (H.264) also works, but is decoded in software.
+The plane wall needs H.265 (Encoding set to Enhanced in Protect). A camera on Standard (H.264) works only with the GStreamer wall, and is decoded in software there.
 
 ## Quick start
 
@@ -57,7 +58,7 @@ Over SSH on the Pi (check the prompt names the Pi first):
    ./install.sh
    ```
 
-[`install.sh`](install.sh) is idempotent: run it again after every `git pull` or system update. It installs missing packages, creates the `camwall` user or adds it to missing groups, loads `i2c-dev` for the display check, installs the script and unit only when they differ, never overwrites `camwall.conf`, and restarts the service only when something changed or it is not running. Options: `--dry-run`, `--no-apt`, `--no-restart`.
+[`install.sh`](install.sh) is idempotent: run it again after every `git pull` or system update. It installs missing packages, creates the `camwall` user or adds it to missing groups, loads `i2c-dev` for the display check, builds the plane wall, installs the programs and the unit only when they differ, never overwrites `camwall.conf`, and restarts the service only when something changed or it is not running. Options: `--dry-run`, `--no-apt`, `--no-restart`.
 
 The manual steps, the hardware checks and how to confirm the hardware decoder is really in use are in [docs/installation.md](docs/installation.md).
 
@@ -69,11 +70,11 @@ Everything lives in `/etc/camwall/camwall.conf` (root:root, 0600, never in the r
 |---|---|---|
 | `UNIFI_HOST` | (required) | Gateway name or IP serving RTSPS on port 7441 |
 | `TOKEN1`..`TOKEN4` | (required) | Stream tokens; order is tile position (top-left, top-right, bottom-left, bottom-right) |
-| `FPS` | 15 | Frame rate per tile, 1-100 |
-| `TILE_WIDTH`, `TILE_HEIGHT` | 960, 540 | One tile; the screen is 2x2 tiles |
-| `STREAM_TIMEOUT` | 10 | Seconds without data before a stalled camera restarts the wall |
+| `WALL` | `planes` | `planes` (decode to display planes) or `gstreamer` (the older wall, as a fallback) |
 | `DISPLAY_PROBE` | `ddcutil --syslog never getvcp d6` | Command that succeeds while the monitor is powered; `none` disables the check |
 | `PROBE_INTERVAL`, `PROBE_FAILS`, `PROBE_SETTLE` | 5, 3, 3 | Probe period, failures before stopping, delay after the display returns |
+
+The plane wall shows every camera frame and takes its tile size from the display mode. `FPS`, `TILE_WIDTH`, `TILE_HEIGHT` and `STREAM_TIMEOUT` apply only to the GStreamer wall (see [docs/operation.md](docs/operation.md#the-gstreamer-wall-fallback)).
 
 ## Operation
 
@@ -86,7 +87,7 @@ Everything lives in `/etc/camwall/camwall.conf` (root:root, 0600, never in the r
 | Change settings or rotate tokens | `sudoedit /etc/camwall/camwall.conf`, then `sudo systemctl restart camwall` |
 | Update | `git pull && ./install.sh` |
 
-A dead camera or pipeline makes systemd restart the wall with backoff (3 s up to 60 s); a configuration error exits with status 78 and is not retried. See [docs/operation.md](docs/operation.md) for failure handling, startup checks, display presence and frame rate, and [docs/troubleshooting.md](docs/troubleshooting.md) when something looks wrong.
+A dead camera only blanks its own tile; the wall reconnects it by itself. If the wall process exits, the daemon restarts it with backoff; if the daemon hangs, the systemd watchdog restarts the service. A configuration error exits with status 78 and is not retried. See [docs/operation.md](docs/operation.md) for failure handling, startup checks, display presence and frame rate, and [docs/troubleshooting.md](docs/troubleshooting.md) when something looks wrong.
 
 ## Documentation
 
@@ -95,7 +96,7 @@ A dead camera or pipeline makes systemd restart the wall with backoff (3 s up to
 | [docs/installation.md](docs/installation.md) | Step-by-step manual installation, hardware checks, confirming hardware decoding |
 | [docs/operation.md](docs/operation.md) | Runtime behaviour: frame rate, failure handling, startup checks, display presence |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Symptoms, causes and fixes |
-| [docs/design.md](docs/design.md) | Why ffmpeg + FIFOs, what did not work, the decode-to-plane work, upstream state, planned Home Assistant integration |
+| [docs/design.md](docs/design.md) | The plane wall and the daemon, why the GStreamer wall used ffmpeg + FIFOs, what did not work, upstream state, planned Home Assistant integration |
 | [docs/measurements.md](docs/measurements.md) | CPU, temperature and power measurements on the reference Pi |
 | [docs/security.md](docs/security.md) | Token handling, service sandboxing, known exposures |
 | [TODO.md](TODO.md) | Open work, by phase |
@@ -103,15 +104,15 @@ A dead camera or pipeline makes systemd restart the wall with backoff (3 s up to
 ## Repository layout
 
 ```text
-bin/camwall                    the wall (installed to /usr/local/bin/camwall)
+bin/camwalld                   the daemon run by the unit (installed to /usr/local/bin/camwalld)
+planes/camwall-planes.c        the plane wall, built by install.sh (/usr/local/bin/camwall-planes)
+bin/camwall                    the GStreamer wall, the fallback (/usr/local/bin/camwall)
 systemd/camwall.service        the service unit
 config/camwall.conf.example    template for /etc/camwall/camwall.conf (secrets live only there)
 install.sh                     installs or updates everything, safe to re-run
 docs/                          detailed documentation (see above)
 TODO.md                        open tasks, by phase
 ```
-
-Branch `drm-planes` adds `planes/camwall-planes.c`, the experimental decode-to-plane wall.
 
 ## Similar projects
 
@@ -123,7 +124,7 @@ At the time of writing (October 2026) no maintained project was found that does 
 | [rpisurv](https://github.com/SvenVD/rpisurv) / [OpenSurv](https://github.com/opensurv/opensurv) | rpisurv: omxplayer; OpenSurv: mpv | rpisurv stops at Buster. OpenSurv targets x86 boxes; Pi and H.265 status not stated. UniFi Protect integration requested but not built |
 | [Camplayer](https://ipcamtalk.com/threads/camplayer-an-open-source-ip-camera-viewer-grid-video-player-video-wall-for-the-raspberry-pi.49245) | omxplayer / VLC grid | No H.265 in grid mode; inactive |
 | [PiPlay](https://github.com/HussX/piplay) | PyQt6 on eglfs, Pi 4+, Bookworm Lite | Lists UniFi cameras and H.265 as tested; whether decoding is in hardware is not stated; no active maintenance planned |
-| [denise-video](https://docs.rs/denise-video) | Rust crate: dmabuf to DRM framebuffer to video plane | Closest to the `drm-planes` approach. H.264 verified on Pi; HEVC not finished yet |
+| [denise-video](https://docs.rs/denise-video) | Rust crate: dmabuf to DRM framebuffer to video plane | Same approach as camwall's plane wall. H.264 verified on Pi; HEVC not finished yet |
 | [Frigate](https://docs.frigate.video/configuration/go2rtc) Birdseye, [go2rtc](https://github.com/AlexxIT/go2rtc) | Server composites cameras, restreams one RTSP feed | The Pi would only decode one stream, but it needs a server and adds latency |
 | [UniFi Viewport](https://lazyadmin.nl/home-network/unifi-viewport-review/) | Ubiquiti's own HDMI viewer appliance | Turnkey and 4K-capable; reportedly fewer streams in H.265 than in H.264; no custom modes |
 | mpv 0.41+ with `v4l2request` | `--hwdec=v4l2request --gpu-hwdec-interop=v4l2request-overlay` | Reported working on Pi HEVC; Debian Trixie ships 0.40 without it |

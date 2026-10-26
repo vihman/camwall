@@ -29,7 +29,7 @@ At 24 fps: 23.6% idle, load average 5.8.
 
 At 30 fps the wall overloads the Pi 4. One reading: 8% idle (66% user, 25% system), load average 11.4 and rising, clock 1500 MHz, `get_throttled` 0x0, 70.6 C, socket `Recv-Q` about 0, each ffmpeg writing 30.7-31.0 fps, and visibly laggy output. So the cause is not power, heat or the network receive path but CPU capacity. The busiest threads were the four GStreamer `filesrc` readers (about 22% of a core each, against about 15% for each hardware decoder thread), then the compositor and its pool threads, the ffmpeg pipe writers and the Wi-Fi driver. At this rate the plumbing around the decode costs more than the decode itself. Keep `FPS` at 15 unless you measure otherwise on your own setup.
 
-Untested ways to make 30 fps viable with this design include Ethernet instead of Wi-Fi and cutting the `filesrc` read overhead. A larger `blocksize` alone probably gains little, because each read from a FIFO returns at most the pipe buffer (64 KB by default) against a frame of about 780 KB, so the pipe size would have to be raised as well. The decode-to-plane design (see [Design](design.md#decode-to-plane-experimental)) removes this plumbing altogether.
+Untested ways to make 30 fps viable with this design include Ethernet instead of Wi-Fi and cutting the `filesrc` read overhead. A larger `blocksize` alone probably gains little, because each read from a FIFO returns at most the pipe buffer (64 KB by default) against a frame of about 780 KB, so the pipe size would have to be raised as well. The plane wall (see [Design](design.md#the-plane-wall)) removes this plumbing altogether.
 
 Overall CPU idle at the frame rates tried: about 55% at 15 fps, about 44% at 20 fps, 23.6% at 24 fps and about 8% at 30 fps (laggy). A separate 20 fps sample taken right after a service restart read 32%.
 
@@ -67,7 +67,7 @@ An earlier run on the same Pi with a weak supply and no cooling was throttled to
 
 Power (smart-plug meter), one reading each, taken at different moments: 17 W with the Pi (wall running) and the monitor on the plug, 13 W with the monitor alone. That puts the Pi at about 4 W at that moment only. It is not a typical or maximum figure: the Pi's draw varies with load and was never measured over time or with the wall stopped. The monitor is the larger part, and the plug cut already covers it.
 
-## Decode-to-plane (experimental)
+## Plane wall
 
 One stream through `ffmpeg -hwaccel drm -hwaccel_output_format drm_prime -f vout_drm -`: 97.1% idle (one sample, night/IR scene).
 

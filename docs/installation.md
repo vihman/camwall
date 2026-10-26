@@ -17,10 +17,11 @@ Treat the token as a credential: anyone on the network who has it can watch that
 ```bash
 sudo apt update
 sudo apt install -y ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-base \
-  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad v4l-utils libdrm-tests ddcutil
+  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad v4l-utils libdrm-tests ddcutil \
+  python3 gcc pkg-config libdrm-dev libavformat-dev libavcodec-dev libavutil-dev
 ```
 
-`v4l-utils` and `libdrm-tests` are only for the checks in the next step.
+The `-dev` packages, `gcc` and `pkg-config` are for building the plane wall in step 6. They must come from the Raspberry Pi OS archive, whose FFmpeg build carries the Pi's hardware-decode support. `ffmpeg` and the GStreamer packages are for the GStreamer fallback. `v4l-utils` and `libdrm-tests` are only for the checks in the next step.
 
 ## 3. Check the hardware
 
@@ -64,16 +65,20 @@ The file holds the gateway, the four tokens and all optional settings (frame rat
 
 Upgrading from a version that used `/etc/camwall/tokens.env`: `install.sh` moves the file to `camwall.conf` for you. By hand, run `sudo mv /etc/camwall/tokens.env /etc/camwall/camwall.conf` before installing the new unit, otherwise the service cannot start.
 
-## 6. Install the script and the unit, then start
+## 6. Build the plane wall, install the programs and the unit, then start
 
 ```bash
+gcc -O2 -Wall -o /tmp/camwall-planes planes/camwall-planes.c \
+  $(pkg-config --cflags --libs libdrm libavformat libavcodec libavutil) -lpthread
+sudo install -m 0755 -o root -g root /tmp/camwall-planes /usr/local/bin/camwall-planes
+sudo install -m 0755 -o root -g root bin/camwalld /usr/local/bin/camwalld
 sudo install -m 0755 -o root -g root bin/camwall /usr/local/bin/camwall
 sudo install -m 0644 -o root -g root systemd/camwall.service /etc/systemd/system/camwall.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now camwall
 ```
 
-The wall should appear within a few seconds.
+The wall should appear within a few seconds. `journalctl -u camwall` shows `started the planes wall` and then `camN: streaming` for each camera.
 
 ## 7. Verify
 
