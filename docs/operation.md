@@ -14,7 +14,7 @@ The wall depends on the monitor being powered. The daemon probes the display eve
 - **Monitor goes off while the wall runs:** after `PROBE_FAILS` consecutive failures (default 3, so about 15 s), the daemon logs `display lost` and stops the wall.
 - **Monitor comes back:** the daemon logs `display detected, starting the wall in Ns`, waits `PROBE_SETTLE` seconds (default 3) and starts the wall.
 
-The service stays `active` throughout. If the probe command is not installed, the daemon logs that and runs without the check; `DISPLAY_PROBE=none` turns it off explicitly. All four settings are optional and go in `/etc/camwall/camwall.conf`.
+The service stays `active` throughout, and the journal and the `Status:` line of `systemctl status camwall` include the probe's own message, for example `no display detected (Display not found)`. If the probe command is not installed, or cannot run at all (exit status 126 or 127, for example after a broken system update leaves a shared library missing), the daemon logs `display probe cannot run (...)` and runs the wall without the check: a wall that is always on is a better failure than a wall that never starts. `DISPLAY_PROBE=none` turns the check off explicitly. All four settings are optional and go in `/etc/camwall/camwall.conf`.
 
 Why DDC/CI and not the HDMI connector status, and what the probe costs: see [Design](design.md#display-presence-detection).
 

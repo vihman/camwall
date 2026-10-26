@@ -12,7 +12,10 @@ Configuration comes from the environment (systemd EnvironmentFile):
   UNIFI_HOST, TOKEN1..TOKEN4   required; passed to the wall in its environment
   WALL                         planes or gstreamer (default planes)
   DISPLAY_PROBE                command that succeeds while the monitor is powered
-                               (default "ddcutil --syslog never getvcp d6"; "none" disables)
+                               (default "ddcutil --syslog never getvcp d6"; "none" disables).
+                               A probe that cannot run at all (missing, or exit status
+                               126/127, e.g. a broken shared library) is logged and the
+                               wall runs without display detection.
   PROBE_INTERVAL               seconds between probes (default 5)
   PROBE_FAILS                  consecutive failed probes before the wall stops (default 3)
   PROBE_SETTLE                 seconds to wait after the display returns (default 3)
@@ -152,13 +155,23 @@ def main():
     signal.signal(signal.SIGINT, on_term)
 
     def display_on():
+        """(True|False, reason) for display present or absent, (None, reason) if the
+        probe cannot run at all: exit status 126/127 is the shell convention for
+        "not executable" / "not found", which also covers a shared-library load error."""
         if cfg.probe is None:
-            return True
+            return True, ""
         try:
-            return subprocess.run(cfg.probe, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL, timeout=10).returncode == 0
-        except (subprocess.TimeoutExpired, OSError):
-            return False
+            r = subprocess.run(cfg.probe, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, timeout=10)
+        except subprocess.TimeoutExpired:
+            return False, "probe timed out"
+        except OSError as e:
+            return None, str(e)
+        lines = [l.strip() for l in r.stdout.decode(errors="replace").splitlines() if l.strip()]
+        reason = lines[0][:160] if lines else f"exit status {r.returncode}"
+        if r.returncode in (126, 127):
+            return None, reason
+        return r.returncode == 0, reason
 
     def status(msg):
         notify(f"STATUS={msg}")
@@ -180,7 +193,12 @@ def main():
 
             if now >= next_probe:
                 next_probe = now + cfg.interval
-                if display_on():
+                on, why = display_on()
+                if on is None:
+                    log(f"display probe cannot run ({why}), running without display detection")
+                    cfg.probe = None
+                    on = True
+                if on:
                     fails = 0
                     if present is False:
                         log(f"display detected, starting the wall in {cfg.settle}s")
@@ -190,10 +208,10 @@ def main():
                     fails += 1
                     if present is None or (present and fails >= cfg.fails):
                         if wall.proc is not None:
-                            log(f"display lost ({fails} failed probes), stopping the wall")
+                            log(f"display lost ({fails} failed probes: {why}), stopping the wall")
                             wall.stop()
-                        log("no display detected, idle until it returns")
-                        status("no display, idle")
+                        log(f"no display detected ({why}), idle until it returns")
+                        status(f"no display, idle ({why})")
                         present = False
 
             rc = wall.exited()
