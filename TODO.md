@@ -26,6 +26,7 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
 - [x] Split `planes/` into `common.h`, `stream.c`, `display.c`, `main.c` and a `Makefile`, with separate `Stream`, `Tile` and `PlaneProps` structs (2026-10-26). No warnings with `-Wall -Wextra`. On the Pi, all four tiles stream, and restarting several cameras blanks and recovers only their own tiles.
 - [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
 - [ ] Share one hardware device context across the camera threads.
+- [ ] H.264 cameras via `h264_v4l2m2m` (added 2026-10-27, untested): on the Pi check the `streaming (h264_v4l2m2m)` line, a correct picture, the tile's recovery after a camera restart, and the CPU with one and with four cameras on H.264.
 
 ## Phase 3: Home Assistant (after the wall is stable)
 
@@ -67,4 +68,4 @@ Only worth doing if the fallback is used regularly or the plane wall is abandone
 
 - [ ] GStreamer wall: raise the FIFO pipe size (`F_SETPIPE_SZ`) or use Unix sockets to cut the `filesrc` overhead, then re-run 30 fps. Without it, 30 fps saturates the CPU on Ethernet too (2026-10-26).
 - [ ] GStreamer wall: add black fallback tiles (`videotestsrc` + compositor `ignore-inactive-pads`), so one dead camera no longer blanks the whole wall.
-- [ ] Hardware H.264 for cameras on Standard: `h264_v4l2m2m`, chosen per camera via `ffprobe`.
+- [ ] Hardware H.264 for cameras with Super Encoding unchecked: `h264_v4l2m2m`, chosen per camera via `ffprobe`.

@@ -35,7 +35,7 @@ sudoedit /etc/camwall/camwall.conf      # WALL=gstreamer
 sudo systemctl restart camwall
 ```
 
-Remove the line, or set `WALL=planes`, to switch back. Use the fallback if the plane wall misbehaves after a system update, or for a camera that can only send H.264: the plane wall refuses H.264 and logs `codec is not HEVC`.
+Remove the line, or set `WALL=planes`, to switch back. Use the fallback if the plane wall misbehaves after a system update. The plane wall takes H.265 and H.264; for any other codec it logs `no decoder for ...` and leaves that tile black.
 
 ## Measuring and checking
 
@@ -92,4 +92,4 @@ At start the GStreamer wall checks that `ffmpeg` and `gst-launch-1.0` exist (fat
 - the service user cannot open it
 - this ffmpeg has no `drm` hwaccel
 
-About 10 s after starting, it also checks that each ffmpeg holds the decoder device open. It logs `camN: ffmpeg does not hold ...` for one that does not, which is expected for a camera on H.264 (Standard). These checks only warn. They automate the `fuser` check in [Confirming the hardware decoder is in use](installation.md#confirming-the-hardware-decoder-is-in-use).
+About 10 s after starting, it also checks that each ffmpeg holds the decoder device open. It logs `camN: ffmpeg does not hold ...` for one that does not, which is expected for a camera on H.264 (Super Encoding unchecked). These checks only warn. They automate the `fuser` check in [Confirming the hardware decoder is in use](installation.md#confirming-the-hardware-decoder-is-in-use).

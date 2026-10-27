@@ -10,7 +10,7 @@ For each camera, open its settings in Protect, go to the RTSP section, and enabl
 
 Treat the token as a credential: anyone on the network who has it can watch that camera. Regenerate it in Protect if it ever leaks.
 
-**Leave the camera's video encoding on Enhanced.** In Protect the setting is under the camera's Recording Settings, Recording Quality, Encoding, and offers Standard, Enhanced and Advanced. In UniFi's wording Enhanced is H.265 (HEVC) and Standard is H.264 (a third-party Protect review describes it that way). The setting sits in the Recording Quality block, so Protect presents it as a recording setting, but it also governs the RTSP streams. On the reference system all four cameras were on Enhanced and all four streams came out as H.265, which is what this wall is built around. Switching one camera to Standard changed its Medium RTSP stream to H.264 (1280x720, 30 fps); that was tested on one camera. What Advanced does is not known. If you switch to Standard, check the codec with `ffmpeg -hide_banner -rtsp_transport tcp -i "rtsps://<gateway>:7441/<TOKEN>"` before relying on the wall. A camera on Standard still works, but its H.264 stream is decoded in software (see [Measurements](measurements.md)), so it costs more CPU than an Enhanced camera.
+**Keep the camera on H.265: Super Encoding checked, set to Auto.** In current Protect the setting is under the camera's Recording Settings, Recording Quality, as a **Super Encoding** checkbox with Auto or AV1. Older Protect versions show it as Encoding: Standard, Enhanced or Advanced. Protect presents it as a recording setting, but it governs the RTSP streams too. Confirmed on the reference system (2026-10-27): Super Encoding unchecked sends H.264, checked with Auto sends H.265 (in the old UI, Standard sent H.264 and Enhanced H.265). The wall is built and measured around H.265. A camera on H.264 also works: the plane wall decodes it on the Pi's separate H.264 block with FFmpeg's `h264_v4l2m2m` (not yet tested on the Pi), and the GStreamer wall decodes it in software (see [Measurements](measurements.md)), which costs more CPU. H.264 gave no sharpness gain on the reference system: Protect sent its Medium stream at about the same bitrate (0.31 against 0.39 Mbit/s for an H.265 camera, 2026-10-27). Do not pick AV1 (probably the old Advanced): the Pi 4 has no AV1 decoder, and with a camera on AV1 for about 10 s the Pi's ffprobe could not identify the stream's codec (2026-10-27). Check what a camera sends with `tools/feed-info.sh N`.
 
 ## 2. Install packages
 
@@ -78,7 +78,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now camwall
 ```
 
-The wall should appear within a few seconds. `journalctl -u camwall` shows `started the planes wall` and then `camN: streaming` for each camera.
+The wall should appear within a few seconds. `journalctl -u camwall` shows `started the planes wall` and then `camN: streaming (hevc)` for each camera (`h264_v4l2m2m` for a camera on H.264).
 
 ## 7. Verify
 

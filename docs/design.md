@@ -40,7 +40,7 @@ Review findings and weak spots:
 - **Left to the daemon:** the display-presence probe (on its own it keeps decoding with the monitor off), systemd notify and watchdog. Still missing: tile settings, a decoder check, and per-camera health output for the daemon.
 - **Root is not needed** (verified 2026-10-26). Run as user `camwall` with only the groups `video` and `render`, it gets the display and streams all four cameras. Like `kmssink`, it becomes DRM master because it is the first to open the card, which needs no extra capability. Under camwalld it runs with the full hardening of `camwall.service`.
 - **Monitor power cycle:** works (see above). The flip-timeout re-modeset path was not triggered and remains unexercised. Presence detection still needs DDC/CI.
-- **Guesses that happened to work or are unexercised:** the first modeset turns the primary plane off (the fallback, a black 1920x1080 dumb buffer, is untested); the DRM device path passed to FFmpeg's hwdevice creation; frame size and modifier taken from FFmpeg's descriptor. H.264 cameras are refused ("set Encoding to Enhanced").
+- **Guesses that happened to work or are unexercised:** the first modeset turns the primary plane off (the fallback, a black 1920x1080 dumb buffer, is untested); the DRM device path passed to FFmpeg's hwdevice creation; frame size and modifier taken from FFmpeg's descriptor. H.264 cameras go to `h264_v4l2m2m` (the Pi's stateful H.264 block, `/dev/video10`), expecting the Pi FFmpeg build to hand over DRM_PRIME frames from it too; untested on the Pi, including whether the block keeps up with four 720p30 streams. Other codecs are refused ("no decoder for ...").
 - **Smaller points:** it decodes every frame at the camera rate (fine in hardware, but each held frame uses CMA memory; four streams should fit, about seven is the reported Pi 4 limit); it creates one hardware device context per camera where one shared context would do.
 
 ## The daemon (camwalld)
@@ -110,5 +110,5 @@ Not built; see [TODO](../TODO.md) phase 3.
 
 ## Ideas not built
 
-- Hardware H.264 for cameras on Standard: ffmpeg's `h264_v4l2m2m` (picking the decoder per camera via `ffprobe`), or a GStreamer wall with `v4l2h264dec`. Neither tried.
+- Hardware H.264 in the GStreamer wall for cameras with Super Encoding unchecked: ffmpeg's `h264_v4l2m2m` (picking the decoder per camera via `ffprobe`), or `v4l2h264dec`. Not tried; the plane wall already uses `h264_v4l2m2m`.
 - With the GStreamer wall: raising the FIFO pipe size (`F_SETPIPE_SZ`, capped by `/proc/sys/fs/pipe-max-size`) or using Unix sockets to cut the `filesrc` overhead; black fallback tiles via `videotestsrc` and the compositor's `ignore-inactive-pads`. Only worth doing if the plane wall is abandoned.

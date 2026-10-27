@@ -18,10 +18,10 @@ static int intr_cb(void *opaque)
 
 static enum AVPixelFormat get_fmt(AVCodecContext *ctx, const enum AVPixelFormat *f)
 {
-    (void)ctx;
     for (; *f != AV_PIX_FMT_NONE; f++)
         if (*f == AV_PIX_FMT_DRM_PRIME)
             return *f;
+    say(((Stream *)ctx->opaque)->name, "%s offers no DRM_PRIME output", ctx->codec->name);
     return AV_PIX_FMT_NONE;
 }
 
@@ -76,13 +76,19 @@ static void run_stream(Stream *s)
         if ((int)i != vi)
             fc->streams[i]->discard = AVDISCARD_ALL;
 
-    if (fc->streams[vi]->codecpar->codec_id != AV_CODEC_ID_HEVC) {
-        say(s->name, "codec is not HEVC (set camera Encoding to Enhanced)");
+    /* HEVC: the stateless rpi-hevc-dec through the drm hwaccel. H.264: the Pi's
+       separate stateful H.264 block through v4l2m2m. Both hand over DRM_PRIME frames. */
+    enum AVCodecID id = fc->streams[vi]->codecpar->codec_id;
+    const AVCodec *dec = id == AV_CODEC_ID_HEVC ? avcodec_find_decoder(id)
+                       : id == AV_CODEC_ID_H264 ? avcodec_find_decoder_by_name("h264_v4l2m2m")
+                       : NULL;
+    if (!dec) {
+        say(s->name, "no decoder for %s (use H.265 or H.264)", avcodec_get_name(id));
         goto out;
     }
-    const AVCodec *dec = avcodec_find_decoder(AV_CODEC_ID_HEVC);
-    ctx = dec ? avcodec_alloc_context3(dec) : NULL;
+    ctx = avcodec_alloc_context3(dec);
     if (!ctx) goto out;
+    ctx->opaque = s;
     avcodec_parameters_to_context(ctx, fc->streams[vi]->codecpar);
 
     r = av_hwdevice_ctx_create(&hw, AV_HWDEVICE_TYPE_DRM, s->drm_path, NULL, 0);
@@ -97,7 +103,7 @@ static void run_stream(Stream *s)
     pkt = av_packet_alloc();
     int64_t last_frame = now_ms();
     int errs = 0;
-    say(s->name, "streaming");
+    say(s->name, "streaming (%s)", dec->name);
     while (!g_stop && !fail) {
         s->deadline = now_ms() + 10000;
         if (av_read_frame(fc, pkt) < 0)

@@ -33,16 +33,16 @@ camwalld (systemd, Type=notify, watchdog): starts/stops camwall-planes on the DD
 | ffmpeg | FFmpeg 7.1 series, Pi OS build (libavformat 61.7) |
 | Display | 1920x1080 @ 60 Hz on HDMI-A-1, monitor powered through a smart plug |
 | Network | Ethernet, Wi-Fi radio off (measurements before 2026-10-26 were over Wi-Fi) |
-| Cameras | UniFi G6-series cameras, Encoding set to Enhanced, all send H.265 on RTSP |
+| Cameras | UniFi G6-series cameras, Super Encoding on Auto (formerly Encoding: Enhanced), all send H.265 on RTSP |
 | Gateway | UniFi Cloud Gateway running Protect, RTSPS on port 7441 |
 
-The plane wall needs H.265 (Encoding set to Enhanced in Protect). A camera on Standard (H.264) works only with the GStreamer wall, and is decoded in software there.
+H.265 is recommended (Super Encoding checked and on Auto in Protect; Enhanced in older versions). A camera with Super Encoding unchecked sends H.264, which the plane wall decodes on the Pi's separate H.264 block (not yet tested on the Pi) and the GStreamer wall in software.
 
 ## Quick start
 
 Over SSH on the Pi (check the prompt names the Pi first):
 
-1. In UniFi Protect, enable the **Medium** RTSP stream for each camera and note the token (the last path segment of `rtsps://<gateway>:7441/<TOKEN>?enableSrtp`). Keep the cameras' Encoding on **Enhanced** (H.265).
+1. In UniFi Protect, enable the **Medium** RTSP stream for each camera and note the token (the last path segment of `rtsps://<gateway>:7441/<TOKEN>?enableSrtp`). Keep the cameras' **Super Encoding** checked and on **Auto** (H.265; **Enhanced** in older Protect versions).
 2. Clone the repository and run the installer:
 
    ```bash
