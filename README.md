@@ -36,7 +36,7 @@ camwalld (systemd, Type=notify, watchdog): starts/stops camwall-planes on the DD
 | Cameras | UniFi G6-series cameras, Super Encoding on Auto (formerly Encoding: Enhanced), all send H.265 on RTSP |
 | Gateway | UniFi Cloud Gateway running Protect, RTSPS on port 7441 |
 
-H.265 is recommended (Super Encoding checked and on Auto in Protect; Enhanced in older versions). A camera with Super Encoding unchecked sends H.264, which the plane wall decodes on the Pi's separate H.264 block (not yet tested on the Pi) and the GStreamer wall in software.
+H.265 is recommended (Super Encoding checked and on Auto in Protect; Enhanced in older versions). A camera with Super Encoding unchecked sends H.264, which the plane wall decodes on the Pi's separate H.264 block (needs `gpu_mem=256` for more than one such camera, see [Installation](docs/installation.md#1-enable-rtsp-streams-in-unifi-protect)) and the GStreamer wall in software.
 
 ## Quick start
 
