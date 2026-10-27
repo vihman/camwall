@@ -57,7 +57,7 @@ Topics, with the default prefix:
 - **The mode persists:** camwalld saves it in `/var/lib/camwall/mode`, so `off` survives a restart, a reboot or a broker outage. With `MQTT=no` the saved mode is ignored and the wall always runs, since nothing could switch it back on.
 - **A broker that is down never stops the wall:** camwalld logs the lost connection once and reconnects by itself (after 1 s, backing off to at most 60 s).
 
-`tools/mqtt-test.py` checks the settings step by step and stops at the first failure. The steps are the settings, the name lookup, TCP, TLS (with the certificate's subject, issuer and expiry), the MQTT login, and the retained messages on camwall's topics. `--set off` or `--set cameras` also sends a command. It uses sudo to read the configuration and prints no password. When camwalld cannot connect, its log line names the cause too, for example `cannot connect to host:8883 (TLS certificate: IP address mismatch, ...)`.
+`tools/mqtt-test.py` checks the settings step by step and stops at the first failure. The steps are the settings, the name lookup, TCP, TLS (with the certificate's subject, issuer and expiry), the MQTT login, and the retained messages on camwall's topics. `--set MODE` (for example `--set camera2`) also sends a command. It uses sudo to read the configuration and prints no password. When camwalld cannot connect, its log line names the cause too, for example `cannot connect to host:8883 (TLS certificate: IP address mismatch, ...)`.
 
 From any machine with `mosquitto-clients`:
 
