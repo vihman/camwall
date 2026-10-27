@@ -119,21 +119,8 @@ else
   fi
   if [ ! -r "$CONF" ]; then
     echo "    cannot read $CONF as $(id -un); skipping the placeholder check (run as root to include it)"
-  else
-    # before CAMn_URL: UNIFI_HOST + TOKENn with the URL fixed to rtsps://host:7441/token
-    if grep -q '^UNIFI_HOST=' "$CONF" && ! grep -q '^CAM1_URL=' "$CONF"; then
-      say "converting $CONF to CAMn_URL (backup in $CONF.bak)"
-      run cp -p "$CONF" "$CONF.bak"
-      run sed -i 's/^UNIFI_HOST=/STREAM_HOST=/' "$CONF"
-      if [ "$DRY" = 0 ]; then
-        { echo; echo "# Added by install.sh when converting from UNIFI_HOST and TOKENn"
-          echo "STREAM_PORT=7441"
-          for i in 1 2 3 4; do echo "CAM${i}_URL=rtsps://<STREAM_HOST>:<STREAM_PORT>/<TOKEN$i>"; done
-        } >> "$CONF"
-      fi
-      changed=1
-    fi
-    if grep -qE '=(replace-me|camera\.example\.com)$' "$CONF"; then configured=0; fi
+  elif grep -qE '=(replace-me|camera\.example\.com)$' "$CONF"; then
+    configured=0
   fi
 fi
 

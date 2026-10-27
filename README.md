@@ -59,7 +59,7 @@ Over SSH on the Pi (check the prompt names the Pi first):
    ./install.sh
    ```
 
-[`install.sh`](install.sh) is idempotent: run it again after every `git pull` or system update. It installs missing packages, creates the `camwall` user or adds it to missing groups, loads `i2c-dev` for the display check, builds the plane wall, installs the programs and the unit only when they differ, never overwrites `camwall.conf` (an older one with `UNIFI_HOST` and `TOKEN1..4` is converted once to `CAMn_URL` lines, keeping a `.bak` copy), and restarts the service only when something changed or it is not running. Options: `--dry-run`, `--no-apt`, `--no-restart`.
+[`install.sh`](install.sh) is idempotent: run it again after every `git pull` or system update. It installs missing packages, creates the `camwall` user or adds it to missing groups, loads `i2c-dev` for the display check, builds the plane wall, installs the programs and the unit only when they differ, never overwrites `camwall.conf`, and restarts the service only when something changed or it is not running. Options: `--dry-run`, `--no-apt`, `--no-restart`.
 
 The manual steps, the hardware checks and how to confirm the hardware decoder is really in use are in [docs/installation.md](docs/installation.md).
 

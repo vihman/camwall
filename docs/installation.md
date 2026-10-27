@@ -73,7 +73,6 @@ sudo ls -l /etc/camwall/camwall.conf    # expect -rw------- root root
 
 The file holds the four camera URLs and all optional settings (frame rate, tile size, stream timeout, display check), each commented-out with its default in the example. In a URL, `<NAME>` is replaced with the value of the variable `NAME` from the same file, so a shared host, port, token or password is written once; camwalld does the replacement and refuses to start (status 78) if a variable is missing. systemd reads the file as root before it drops to the `camwall` user, so the service account never needs read access to it. The format is plain `KEY=value` lines, and comments must be on their own lines (systemd does not accept trailing comments). Because of the `<NAME>` templates the file cannot be loaded with the shell's `.` or `source`; the tools ask `camwalld --url N` for an expanded URL instead.
 
-Upgrading from a version that used `UNIFI_HOST` and `TOKEN1..4`: `install.sh` renames `UNIFI_HOST` to `STREAM_HOST` and appends `STREAM_PORT=7441` and `CAMn_URL=rtsps://<STREAM_HOST>:<STREAM_PORT>/<TOKENn>`, keeping the old file as `camwall.conf.bak` (0600). By hand, make the same edit. From a version that used `/etc/camwall/tokens.env`: `install.sh` moves the file to `camwall.conf` first; by hand, `sudo mv /etc/camwall/tokens.env /etc/camwall/camwall.conf`.
 
 ## 6. Build the plane wall, install the programs and the unit, then start
 
