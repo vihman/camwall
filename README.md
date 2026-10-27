@@ -1,6 +1,6 @@
 # camwall
 
-A 2x2 wall of four UniFi Protect camera streams on a Raspberry Pi 4, running Raspberry Pi OS Lite (no desktop) and rendering straight to the display through KMS/DRM. The Pi's HEVC hardware decodes the streams and the display controller scales and composes them, so the CPU never touches a pixel. A small daemon under systemd runs the wall, stops it while the monitor has no power and starts it again when the monitor returns. Everything is done over SSH.
+A 2x2 wall of four camera streams on a Raspberry Pi 4, running Raspberry Pi OS Lite (no desktop) and rendering straight to the display through KMS/DRM. The streams come from IP cameras or recorders that serve RTSP or RTSPS with H.265 or H.264; each tile's URL is set in the configuration. The Pi's hardware decodes the streams and the display controller scales and composes them, so the CPU never touches a pixel. A small daemon under systemd runs the wall, stops it while the monitor has no power and starts it again when the monitor returns. Everything is done over SSH.
 
 Written with the help of Claude Sonnet 5.5
 
@@ -9,9 +9,10 @@ Written with the help of Claude Sonnet 5.5
 > The older design, ffmpeg decode followed by CPU scaling and GStreamer composition, needed about 72% of the CPU at 24 fps and could not reach 30 fps. It is kept as a fallback (`WALL=gstreamer`). See [Measurements](docs/measurements.md) for both.
 
 ```text
-camera 1..4 (RTSPS from the UniFi gateway)
+camera 1..4 (RTSP or RTSPS from the cameras or a recorder)
    |
-   |  camwall-planes, one thread per camera: RTSPS -> hardware H.265 decode (rpi-hevc-dec)
+   |  camwall-planes, one thread per camera: RTSP(S) -> hardware decode
+   |  (H.265: rpi-hevc-dec; H.264: the H.264 block)
    |  -> DRM_PRIME frame (NV12, Broadcom SAND tiling), newest frame wins
    v
 four overlay planes on the HDMI output: the display controller scales 1280x720 -> 960x540
@@ -36,13 +37,13 @@ camwalld (systemd, Type=notify, watchdog): starts/stops camwall-planes on the DD
 | Cameras | UniFi G6-series cameras, Super Encoding on Auto (formerly Encoding: Enhanced), all send H.265 on RTSP |
 | Gateway | UniFi Cloud Gateway running Protect, RTSPS on port 7441 |
 
-H.265 is recommended (Super Encoding checked and on Auto in Protect; Enhanced in older versions). A camera with Super Encoding unchecked sends H.264, which the plane wall decodes on the Pi's separate H.264 block (needs `gpu_mem=256` for more than one such camera, see [Installation](docs/installation.md#1-enable-rtsp-streams-in-unifi-protect)) and the GStreamer wall in software.
+H.265 is recommended. H.264 streams are decoded on the Pi's separate H.264 block (more than one needs `gpu_mem=256`, see [Installation](docs/installation.md#h264-streams)); the GStreamer wall decodes H.264 in software. Other cameras and recorders than the tested ones should work if they serve such streams, but have not been tried.
 
 ## Quick start
 
 Over SSH on the Pi (check the prompt names the Pi first):
 
-1. In UniFi Protect, enable the **Medium** RTSP stream for each camera and note the token (the last path segment of `rtsps://<gateway>:7441/<TOKEN>?enableSrtp`). Keep the cameras' **Super Encoding** checked and on **Auto** (H.265; **Enhanced** in older Protect versions).
+1. Find the RTSP or RTSPS URL of each camera's stream, ideally about 1280x720 and H.265. For UniFi Protect, see [Installation](docs/installation.md#unifi-protect).
 2. Clone the repository and run the installer:
 
    ```bash
@@ -51,14 +52,14 @@ Over SSH on the Pi (check the prompt names the Pi first):
    ```
 
    On the first run it creates `/etc/camwall/camwall.conf` from the example and stops.
-3. Fill in the gateway and the four tokens, then run the installer again to start the wall:
+3. Fill in the four camera URLs, then run the installer again to start the wall:
 
    ```bash
    sudoedit /etc/camwall/camwall.conf
    ./install.sh
    ```
 
-[`install.sh`](install.sh) is idempotent: run it again after every `git pull` or system update. It installs missing packages, creates the `camwall` user or adds it to missing groups, loads `i2c-dev` for the display check, builds the plane wall, installs the programs and the unit only when they differ, never overwrites `camwall.conf`, and restarts the service only when something changed or it is not running. Options: `--dry-run`, `--no-apt`, `--no-restart`.
+[`install.sh`](install.sh) is idempotent: run it again after every `git pull` or system update. It installs missing packages, creates the `camwall` user or adds it to missing groups, loads `i2c-dev` for the display check, builds the plane wall, installs the programs and the unit only when they differ, never overwrites `camwall.conf` (an older one with `UNIFI_HOST` and `TOKEN1..4` is converted once to `CAMn_URL` lines, keeping a `.bak` copy), and restarts the service only when something changed or it is not running. Options: `--dry-run`, `--no-apt`, `--no-restart`.
 
 The manual steps, the hardware checks and how to confirm the hardware decoder is really in use are in [docs/installation.md](docs/installation.md).
 
@@ -68,8 +69,8 @@ Everything lives in `/etc/camwall/camwall.conf` (root:root, 0600, never in the r
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `UNIFI_HOST` | (required) | Gateway name or IP serving RTSPS on port 7441 |
-| `TOKEN1`..`TOKEN4` | (required) | Stream tokens; order is tile position (top-left, top-right, bottom-left, bottom-right) |
+| `CAM1_URL`..`CAM4_URL` | (required) | `rtsp://` or `rtsps://` URL of each tile (top-left, top-right, bottom-left, bottom-right). `<NAME>` is replaced with the config variable `NAME` |
+| `STREAM_HOST`, `STREAM_PORT`, `TOKEN1`.. | (none) | Conventional variables for the URL templates, e.g. `rtsps://<STREAM_HOST>:<STREAM_PORT>/<TOKEN1>`; any name works |
 | `WALL` | `planes` | `planes` (decode to display planes) or `gstreamer` (the older wall, as a fallback) |
 | `DISPLAY_PROBE` | `ddcutil --syslog never getvcp d6` | Command that succeeds while the monitor is powered; `none` disables the check |
 | `PROBE_INTERVAL`, `PROBE_FAILS`, `PROBE_SETTLE` | 5, 3, 3 | Probe period, failures before stopping, delay after the display returns |
@@ -84,7 +85,7 @@ The plane wall shows every camera frame and takes its tile size from the display
 | Restart count | `systemctl show camwall -p NRestarts` |
 | Restart / stop | `sudo systemctl restart camwall`, `sudo systemctl stop camwall` |
 | Disable autostart | `sudo systemctl disable --now camwall` |
-| Change settings or rotate tokens | `sudoedit /etc/camwall/camwall.conf`, then `sudo systemctl restart camwall` |
+| Change settings or camera URLs | `sudoedit /etc/camwall/camwall.conf`, then `sudo systemctl restart camwall` |
 | Update | `git pull && ./install.sh` |
 | Measure CPU, memory and stream backlog | `tools/measure.sh` |
 | Check hardware decoding | `tools/check-hwdec.sh` |
@@ -109,7 +110,7 @@ A dead camera only blanks its own tile; the wall reconnects it by itself. If the
 ```text
 bin/camwalld                   the daemon run by the unit (installed to /usr/local/bin/camwalld)
 planes/                        the plane wall in C, built by install.sh (/usr/local/bin/camwall-planes):
-                                 stream.c (RTSPS + decode), display.c (KMS planes), main.c, Makefile
+                                 stream.c (RTSP(S) + decode), display.c (KMS planes), main.c, Makefile
 bin/camwall                    the GStreamer wall, the fallback (/usr/local/bin/camwall)
 systemd/camwall.service        the service unit
 config/camwall.conf.example    template for /etc/camwall/camwall.conf (secrets live only there)
@@ -138,7 +139,7 @@ The state of hardware HEVC support in GStreamer, FFmpeg and the kernel is summar
 
 ## Security
 
-The camera tokens are credentials. They live only in `/etc/camwall/camwall.conf`; the service runs as an unprivileged, sandboxed account; the RTSPS certificate is not verified, so use camwall only on an internal network. Details in [docs/security.md](docs/security.md).
+The camera URLs, tokens and passwords are credentials. They live only in `/etc/camwall/camwall.conf`; the service runs as an unprivileged, sandboxed account; the RTSPS certificate is not verified, so use camwall only on an internal network. Details in [docs/security.md](docs/security.md).
 
 ## License
 

@@ -26,6 +26,7 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
 - [x] Split `planes/` into `common.h`, `stream.c`, `display.c`, `main.c` and a `Makefile`, with separate `Stream`, `Tile` and `PlaneProps` structs (2026-10-26). No warnings with `-Wall -Wextra`. On the Pi, all four tiles stream, and restarting several cameras blanks and recovers only their own tiles.
 - [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
 - [ ] Share one hardware device context across the camera threads.
+- [ ] Stream URLs from `CAM1_URL`..`CAM4_URL` with `<NAME>` templates, replacing the fixed UniFi `rtsps://UNIFI_HOST:7441/TOKENn` (2026-10-27, tested only off the Pi). On the Pi check the `install.sh` conversion of the old config, both walls, and the three tools (`measure.sh` now finds the wall's sockets by process, with sudo). A non-UniFi source has not been tried.
 - [ ] H.264 cameras via `h264_v4l2m2m` (added 2026-10-27): all four cameras on H.264 run with `gpu_mem=256` (the default 76 MB is not enough), at the same CPU as H.265. Still to check: the tile's recovery after a camera restart; whether a smaller `gpu_mem` (128) suffices; and whether `avcodec_send_packet` returning `EAGAIN` (possible with v4l2m2m when its input queue is full) drops packets, since the loop does not resend them.
 
 ## Phase 3: Home Assistant (after the wall is stable)
