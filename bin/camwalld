@@ -22,7 +22,8 @@ Configuration comes from the environment (systemd EnvironmentFile):
   PROBE_INTERVAL               seconds between probes (default 5)
   PROBE_FAILS                  consecutive failed probes before the wall stops (default 3)
   PROBE_SETTLE                 seconds to wait after the display returns (default 3)
-  MQTT_HOST                    MQTT broker; unset = no MQTT. With it: MQTT_PORT (1883,
+  MQTT                         yes or no (default no): control and status over MQTT.
+                               With yes: MQTT_HOST (required), MQTT_PORT (1883,
                                8883 with TLS), MQTT_USER, MQTT_PASSWORD, MQTT_TLS (yes/no),
                                MQTT_CA_FILE, MQTT_TOPIC (camwall), MQTT_CLIENT_ID
                                (camwall-<hostname>), MQTT_DISCOVERY (Home Assistant
@@ -210,44 +211,86 @@ def save_mode(mode):
         log(f"cannot save the mode: {e.strerror}")
 
 
+def mqtt_settings():
+    """The validated MQTT_* settings, or None while MQTT=no (the default).
+    Shared with tools/mqtt-test.py."""
+    env = os.environ.get
+    on = env("MQTT", "") or "no"
+    tls = env("MQTT_TLS", "") or "no"
+    for name, value in (("MQTT", on), ("MQTT_TLS", tls)):
+        if value not in ("yes", "no"):
+            config_error(f"{name} must be yes or no (got '{value}')")
+    if on == "no":
+        return None
+    try:
+        import paho.mqtt.client  # noqa: F401
+    except ImportError:
+        config_error("MQTT=yes, but paho-mqtt is missing (apt install python3-paho-mqtt)")
+    if not env("MQTT_HOST"):
+        config_error("MQTT=yes needs MQTT_HOST")
+    cfg = {
+        "host": env("MQTT_HOST"),
+        "port": int_in("MQTT_PORT", 8883 if tls == "yes" else 1883, 1, 65535),
+        "tls": tls == "yes",
+        "ca": env("MQTT_CA_FILE", "") or None,
+        "topic": (env("MQTT_TOPIC", "") or "camwall").strip("/"),
+        "discovery": env("MQTT_DISCOVERY", "") or "homeassistant",
+        "client_id": env("MQTT_CLIENT_ID", "") or f"camwall-{socket.gethostname()}",
+        "user": env("MQTT_USER", ""),
+    }
+    for name in ("topic", "discovery"):
+        if not cfg[name] or re.search(r"[+#\s]", cfg[name]):
+            config_error(f"MQTT_{name.upper()} must be a topic without spaces, + or # "
+                         f"(got '{cfg[name]}')")
+    if cfg["discovery"] == "none":
+        cfg["discovery"] = None
+    if cfg["ca"] and not os.access(cfg["ca"], os.R_OK):
+        config_error(f"MQTT_CA_FILE {cfg['ca']} is missing or not readable")
+    return cfg
+
+
+def connect_problem(host, port, tls, ca):
+    """Why a connection to the broker fails, by repeating paho's steps (TCP, then
+    TLS with certificate and host name checks); None if both work."""
+    try:
+        sock = socket.create_connection((host, port), timeout=5)
+    except OSError as e:
+        return e.strerror or str(e)
+    with sock:
+        if not tls:
+            return None
+        try:
+            ssl.create_default_context(cafile=ca).wrap_socket(sock, server_hostname=host).close()
+        except ssl.SSLCertVerificationError as e:
+            return f"TLS certificate: {e.verify_message}"
+        except ssl.SSLError as e:
+            return f"TLS: {e.reason or e}"
+        except OSError:
+            return "TLS handshake timed out; is this a TLS port?"
+    return None
+
+
 class Mqtt:
     """Plain-text topics under MQTT_TOPIC, plus optional Home Assistant discovery.
     paho runs the connection, reconnects included, in its own thread; commands reach
     the main loop through a queue. A broker that is down never stops the wall."""
 
-    def __init__(self):
-        try:
-            import paho.mqtt.client as mqtt
-        except ImportError:
-            config_error("MQTT_HOST is set, but paho-mqtt is missing (apt install python3-paho-mqtt)")
+    def __init__(self, cfg):
+        import paho.mqtt.client as mqtt   # mqtt_settings() checked that it exists
         env = os.environ.get
-        tls = env("MQTT_TLS", "") or "no"
-        if tls not in ("yes", "no"):
-            config_error(f"MQTT_TLS must be yes or no (got '{tls}')")
-        self.host = env("MQTT_HOST")
-        self.port = int_in("MQTT_PORT", 8883 if tls == "yes" else 1883, 1, 65535)
-        self.topic = (env("MQTT_TOPIC", "") or "camwall").strip("/")
-        self.discovery = env("MQTT_DISCOVERY", "") or "homeassistant"
-        for name, value in (("MQTT_TOPIC", self.topic), ("MQTT_DISCOVERY", self.discovery)):
-            if not value or re.search(r"[+#\s]", value):
-                config_error(f"{name} must be a topic without spaces, + or # (got '{value}')")
-        if self.discovery == "none":
-            self.discovery = None
-        ca = env("MQTT_CA_FILE", "") or None
-        if ca and not os.access(ca, os.R_OK):
-            config_error(f"MQTT_CA_FILE {ca} is missing or not readable")
+        self.host, self.port, self.topic = cfg["host"], cfg["port"], cfg["topic"]
+        self.discovery, self.tls, self.ca = cfg["discovery"], cfg["tls"], cfg["ca"]
 
         self.commands = queue.SimpleQueue()
         self.state = {}          # sub-topic -> payload, republished on every connect
         self.down = False        # log a lost connection once, not every retry
         self.stopping = False
-        c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
-                        client_id=env("MQTT_CLIENT_ID", "") or f"camwall-{socket.gethostname()}",
+        c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=cfg["client_id"],
                         protocol=mqtt.MQTTv311)
-        if env("MQTT_USER"):
-            c.username_pw_set(env("MQTT_USER"), env("MQTT_PASSWORD") or None)
-        if tls == "yes":
-            c.tls_set(ca_certs=ca)
+        if cfg["user"]:
+            c.username_pw_set(cfg["user"], env("MQTT_PASSWORD") or None)
+        if self.tls:
+            c.tls_set(ca_certs=self.ca)
         c.will_set(f"{self.topic}/availability", "offline", qos=1, retain=True)
         c.reconnect_delay_set(1, 60)
         c.on_connect = self._on_connect
@@ -255,7 +298,6 @@ class Mqtt:
         c.on_disconnect = self._on_disconnect
         c.on_message = self._on_message
         self.client = c
-        self.tls, self.ca = tls == "yes", ca
 
     def start(self):
         log(f"mqtt: {self.host}:{self.port}, topic {self.topic}, discovery "
@@ -298,30 +340,10 @@ class Mqtt:
             client.publish(f"{t}/{sub}", payload, qos=1, retain=True)
 
     def _on_connect_fail(self, client, userdata):
-        if not self.down and not self.stopping:
-            self._lost(f"cannot connect to {self.host}:{self.port} ({self._why()})")
-
-    def _why(self):
-        """paho does not report why a connection failed, so repeat the steps it
-        takes (TCP, then TLS with certificate and host name checks) and name the
-        first one that fails."""
-        try:
-            sock = socket.create_connection((self.host, self.port), timeout=5)
-        except OSError as e:
-            return e.strerror or str(e)
-        with sock:
-            if not self.tls:
-                return "TCP works; the MQTT handshake failed"
-            try:
-                ssl.create_default_context(cafile=self.ca).wrap_socket(
-                    sock, server_hostname=self.host).close()
-            except ssl.SSLCertVerificationError as e:
-                return f"TLS certificate: {e.verify_message}"
-            except ssl.SSLError as e:
-                return f"TLS: {e.reason or e}"
-            except OSError:
-                return "TLS handshake timed out; is this a TLS port?"
-        return "TCP and TLS work; the MQTT handshake failed"
+        if not self.down and not self.stopping:   # paho does not say why; find out
+            why = connect_problem(self.host, self.port, self.tls, self.ca)
+            self._lost(f"cannot connect to {self.host}:{self.port} "
+                       f"({why or 'TCP and TLS work; the MQTT handshake failed'})")
 
     def _on_disconnect(self, client, userdata, flags, reason, properties):
         self._lost(f"disconnected ({reason})")
@@ -379,7 +401,8 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--url":
         return print_url(sys.argv[2])
     cfg = Config()
-    mqtt = Mqtt() if os.environ.get("MQTT_HOST") else None
+    mqtt_cfg = mqtt_settings()
+    mqtt = Mqtt(mqtt_cfg) if mqtt_cfg else None
 
     def on_term(signum, frame):
         raise Stop
@@ -411,7 +434,7 @@ def main():
             mqtt.publish("status", msg)
 
     wall = Wall(cfg)
-    mode = load_mode()
+    mode = load_mode() if mqtt else MODES[0]   # without MQTT nothing could undo a saved off
     notify("READY=1")
     log(f"camwalld: {cfg.wall} wall, display probe "
         f"{'off' if cfg.probe is None else repr(shlex.join(cfg.probe))}, mode {mode}")
