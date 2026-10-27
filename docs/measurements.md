@@ -78,3 +78,19 @@ Compared with the GStreamer wall at 24 fps on Ethernet (about 28% idle, load abo
 Overnight run, 2026-10-26, as user `camwall`: 7 hours without a restart or any journal line after a deliberate camera restart at the start. After 7 hours, 73.2 MB resident (about 70 MB shortly after an earlier start), CMA about 443 MB free (about 449 MB in the earlier run), 55.0 C, load average 0.4. A log every 5 minutes from the same process: resident memory and free CMA were flat from 01:25 to 06:40 (70.5-70.8 MB, 448.9 MB free). Between 06:40 and 07:51 they stepped to 73.2 MB and 442.6 MB free, then stayed flat again. That window is dawn, when the cameras switch from night infrared to day colour, so the step is probably the decoder growing its buffers for the heavier daytime stream rather than a leak. Confirmed in a second run under camwalld (2026-10-26 10:57 to 2026-10-27 09:24, one process, 22.5 h): after a dusk and a dawn it held 74.5 MB resident and 440 MB CMA free, the same level as the first run after its dawn step. The step does not repeat or accumulate.
 
 So lowering `FPS` on the GStreamer wall never reduced decoding. It only reduced the copying, scaling and composing after the decoder, which is where that wall's CPU goes.
+
+## Daemon (camwalld)
+
+Under camwalld with the plane wall, as user `camwall`, 2026-10-26, Ethernet:
+
+| Event | Result |
+|---|---|
+| Boot, monitor on | The wall starts about 1 s after the service, with no login |
+| Boot, monitor off | `no display detected (Display not found)`, no wall runs; after plugging the monitor in, the wall starts and sets the monitor's preferred mode (1920x1080) itself |
+| Monitor power cut while running | `display lost` after about 15 s (3 failed probes, 5 s apart), the wall stops; it returns when power does, after `PROBE_SETTLE` |
+| Display probe | `ddcutil getvcp d6` takes about 2-3 s per call, so `PROBE_SETTLE` is counted from the end of the probe |
+| Frozen daemon (`systemctl kill -s STOP --kill-whom=main`) | Restarted by systemd about 34 s later (30 s watchdog plus 3 s restart delay) |
+| `WALL=gstreamer` | The GStreamer wall runs; removing the line switches back |
+| Several cameras restarted | Only their own tiles blank, each recovers by itself |
+
+The GStreamer wall, by contrast, uses the console's mode: booted without a monitor it got 1024x768 and showed a cropped wall once the monitor was plugged in.
