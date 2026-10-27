@@ -16,10 +16,7 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
   - **Plug cut while running:** `display lost` after about 15 s, the wall stops, and it returns when power does. `PROBE_SETTLE` is now counted from the end of the slow ddcutil probe.
   - **Watchdog:** a frozen daemon (`systemctl kill -s STOP --kill-whom=main`) is restarted by systemd about 34 s later (30 s watchdog plus 3 s restart delay).
   - **Fallback:** `WALL=gstreamer` runs the GStreamer wall, and removing it switches back.
-- [ ] Still to check under the daemon:
-  - a dead camera blanks only its own tile (passed when run by hand, not yet under camwalld)
-  - no false `display lost` with the monitor on over a day (`journalctl -u camwall | grep -c 'display lost'`). If there are any, raise `PROBE_FAILS` or add `--sleep-multiplier` to the probe.
-- [ ] Memory: confirm that the dawn step in the overnight run (+2.5 MB process memory, -6.5 MB CMA) does not repeat on every dusk and dawn. Log process memory and `CmaFree` every 5 min over at least one full day.
+- [x] Soak under camwalld, 2026-10-26 10:57 to 2026-10-27 09:24: one wall process for 22.5 h with no restart, through a dusk and a dawn. 74.5 MB resident and 440 MB CMA free at the end. That is the same level as the previous run after its first dawn, so the dawn step is a one-time buffer growth, not a leak. No false `display lost` with the monitor on. A dead camera under camwalld blanks only its own tile (several cameras restarted on 2026-10-26).
 - [ ] Restrict devices: check the `char-*` class names in `/proc/devices` (drm, video4linux, media, dma_heap, i2c), add `DevicePolicy=closed` + `DeviceAllow=` to the unit, and test both walls.
 - [ ] Consider `SystemCallFilter=@system-service` and `MemoryDenyWriteExecute=`. Python and the plane wall should cope; the GStreamer fallback may not (ORC JIT), so test it too.
 - [ ] Add `tools/measure.sh`:
