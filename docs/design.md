@@ -45,17 +45,19 @@ Review findings and weak spots:
 
 ## The daemon (camwalld)
 
-`bin/camwalld`, Python 3 with the standard library only, run by `camwall.service` (`Type=notify`, `WatchdogSec=30`). It is the control plane: it validates the configuration, probes the display, and starts and stops the wall as a child process. No frame passes through it, and a crash of the native wall is just a child's exit status.
+`bin/camwalld`, Python 3 with the standard library (plus Debian's `python3-paho-mqtt` when MQTT is configured), run by `camwall.service` (`Type=notify`, `WatchdogSec=30`). It is the control plane: it validates the configuration, probes the display, takes the mode from MQTT, and starts and stops the wall as a child process. No frame passes through it, and a crash of the native wall is just a child's exit status.
 
 - The wall runs in its own process group, so stopping it also stops anything it started (the GStreamer wall's ffmpeg processes): SIGTERM to the group, SIGKILL after 10 s.
-- `WALL=planes` runs `camwall-planes`; `WALL=gstreamer` runs the older `camwall` script with `DISPLAY_PROBE=none`, since the daemon does the probing. Both inherit the environment, including the tokens.
+- `WALL=planes` runs `camwall-planes`; `WALL=gstreamer` runs the older `camwall` script with `DISPLAY_PROBE=none`, since the daemon does the probing. Both inherit the environment with the expanded `CAMn_URL`s and without the `MQTT_*` settings, so the broker password stays in the daemon.
 - A wall that exits is restarted with backoff (2, 4, 8, 16, 30 s, reset after a minute of running). Exit status 78 from a wall means a configuration error and stops the daemon with 78, which the unit does not restart.
 - Notifications to systemd go straight to `$NOTIFY_SOCKET` (no `python3-systemd` dependency): `READY=1` after the configuration is validated, `WATCHDOG=1` every second, and `STATUS=` with the current state.
+- The wall runs only while the mode is `cameras` and a display is present. The mode is set over MQTT and saved in `$STATE_DIRECTORY/mode` (`/var/lib/camwall/mode`), so it survives restarts and broker outages.
+- MQTT: paho runs the connection, including reconnects (1 s backing off to 60 s) and the Last Will, in its own thread. Commands reach the 1 s main loop through a queue, so the loop stays single-threaded. A broker that is down is logged once and never stops the wall. The `paho` import happens only when `MQTT_HOST` is set. Tested against a local broker (amqtt) with a stub wall, including broker loss and return; not yet on the Pi.
 - `CAMWALL_BIN_DIR` (default `/usr/local/bin`) points the daemon at other wall programs, for testing with stubs.
 
 ### Why Python plus a C helper
 
-Python with ctypes and hand-written FFmpeg struct offsets was judged too fragile. A Python+cffi rewrite (API mode, compiled against the real headers, with a small C glue block for the interrupt callback, `get_format`, the ioctls and the DRM event handler) was considered. The chosen split is to keep the C program as a thin pixel path, run as a child process, under a Python control daemon (stdlib only, no pip). Frames never pass through Python, and a native crash is just a child's exit code.
+Python with ctypes and hand-written FFmpeg struct offsets was judged too fragile. A Python+cffi rewrite (API mode, compiled against the real headers, with a small C glue block for the interrupt callback, `get_format`, the ioctls and the DRM event handler) was considered. The chosen split is to keep the C program as a thin pixel path, run as a child process, under a Python control daemon (stdlib, plus Debian's paho-mqtt for MQTT; no pip). Frames never pass through Python, and a native crash is just a child's exit code.
 
 ## The GStreamer wall (fallback): why ffmpeg and FIFOs
 
@@ -99,14 +101,14 @@ Researched 2026-10; recheck before relying on any of it.
 - **UniFi RTSPS:** [go2rtc#2071](https://github.com/AlexxIT/go2rtc/issues/2071) reports port 7441 RTSPS failures where `rtsp://<gateway>:7447/<token>?enablertsp` works. Not official; not seen here, but a known fallback.
 - **uiprotect** (Python, packaged as `python3-uiprotect` in Debian) can create and fetch RTSPS stream URLs through the Protect API ([docs](https://uiprotect.readthedocs.io/en/latest/api/)), which could automate token rotation.
 
-## Planned: Home Assistant integration
+## Home Assistant integration
 
-Not built; see [TODO](../TODO.md) phase 3.
+MQTT control is built (see [Operation](operation.md#mqtt)); the rest is planned, see [TODO](../TODO.md) phase 3.
 
-- The remote button is an IKEA BILRESA scroll wheel, a Matter-over-Thread device paired with Home Assistant. It appears in HA as 9 Matter event entities, **disabled by default**: 3 channels, each with clockwise, anticlockwise and press. Channel switching happens on the device. A short press is reported only after the ~1 s double-press timeout, and the wheel is reported flaky, so use fixed button presses to set a mode, not the wheel. Some devices reportedly "fall asleep" until the batteries are reseated. Automations must trigger on event-entity state changes; no device triggers appear ([community thread](https://community.home-assistant.io/t/matter-ikea-bilresa-scrollwheel-media-control/1013472)).
-- Control path: MQTT, through the broker Home Assistant already uses. The daemon publishes an HA MQTT-discovery `select` entity (`cameras`, `info`, `off`, later single-camera) plus availability and health. HA automations set fixed select targets from the BILRESA events rather than a blind toggle. The Pi gets its own Mosquitto user, credentials in `/etc/camwall/` (0600). Python client: `python3-paho-mqtt` from apt.
+- Control path: MQTT, kept generic so that any broker and controller works. Plain-text topics under `MQTT_TOPIC` (`mode/set`, `mode`, `status`, `availability`) are the interface. Home Assistant discovery is one consumer of them, on by default (`MQTT_DISCOVERY=homeassistant`), and publishes a `select` (Mode) and a `sensor` (Status) under one device. Later modes (`info`, single camera) become more values of the same select. Per-camera health (`<topic>/camera/<n>`) needs the daemon to read the wall's `camN:` lines first.
+- Remote button: to be decided. A Sonoff Zigbee button through Zigbee2MQTT is the candidate: it reports a press at once, unlike the IKEA BILRESA scroll wheel tried on paper first (Matter event entities disabled by default, a short press reported only after the ~1 s double-press timeout, a wheel reported flaky; [community thread](https://community.home-assistant.io/t/matter-ikea-bilresa-scrollwheel-media-control/1013472)). The press mapping is to be agreed.
 - Info mode: a Chromium kiosk under `cage` (Wayland, DRM direct) showing an HA dashboard, started and stopped by the daemon and mutually exclusive with the cameras (both need DRM master). Auth via a long-lived token for a dedicated non-admin HA user, or `trusted_networks` limited to the Pi's IP. Unverified: injecting the token into the browser storage via the DevTools protocol.
-- Daemon: the existing camwalld (see [The daemon](#the-daemon-camwalld)) gains the MQTT client and a third kind of child, the browser, next to the two walls.
+- Daemon: camwalld (see [The daemon](#the-daemon-camwalld)) gains a third kind of child, the browser, next to the two walls.
 
 ## Ideas not built
 

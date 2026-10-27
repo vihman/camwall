@@ -22,6 +22,7 @@ and composes the 2x2 wall at scanout (atomic KMS)
 HDMI monitor
 
 camwalld (systemd, Type=notify, watchdog): starts/stops camwall-planes on the DDC/CI display probe
+          and on the mode set over MQTT (optional)
 ```
 
 ## Tested configuration
@@ -74,6 +75,7 @@ Everything lives in `/etc/camwall/camwall.conf` (root:root, 0600, never in the r
 | `WALL` | `planes` | `planes` (decode to display planes) or `gstreamer` (the older wall, as a fallback) |
 | `DISPLAY_PROBE` | `ddcutil --syslog never getvcp d6` | Command that succeeds while the monitor is powered; `none` disables the check |
 | `PROBE_INTERVAL`, `PROBE_FAILS`, `PROBE_SETTLE` | 5, 3, 3 | Probe period, failures before stopping, delay after the display returns |
+| `MQTT_HOST` | (unset = off) | MQTT broker for control and status; the other `MQTT_*` settings are in [docs/operation.md](docs/operation.md#mqtt) |
 
 The plane wall shows every camera frame and takes its tile size from the display mode. `FPS`, `TILE_WIDTH`, `TILE_HEIGHT` and `STREAM_TIMEOUT` apply only to the GStreamer wall (see [docs/operation.md](docs/operation.md#the-gstreamer-wall-fallback)).
 
@@ -90,6 +92,7 @@ The plane wall shows every camera frame and takes its tile size from the display
 | Measure CPU, memory and stream backlog | `tools/measure.sh` |
 | Check hardware decoding | `tools/check-hwdec.sh` |
 | Codec, resolution, bitrate of camera N | `tools/feed-info.sh N` |
+| Switch the wall on or off remotely | publish `cameras` or `off` to `camwall/mode/set` over MQTT |
 
 A dead camera only blanks its own tile; the wall reconnects it by itself. If the wall process exits, the daemon restarts it with backoff; if the daemon hangs, the systemd watchdog restarts the service. A configuration error exits with status 78 and is not retried. See [docs/operation.md](docs/operation.md) for failure handling, startup checks, display presence and frame rate, and [docs/troubleshooting.md](docs/troubleshooting.md) when something looks wrong.
 
@@ -98,9 +101,9 @@ A dead camera only blanks its own tile; the wall reconnects it by itself. If the
 | File | Contents |
 |---|---|
 | [docs/installation.md](docs/installation.md) | Step-by-step manual installation, hardware checks, confirming hardware decoding |
-| [docs/operation.md](docs/operation.md) | Runtime behaviour: frame rate, failure handling, startup checks, display presence |
+| [docs/operation.md](docs/operation.md) | Runtime behaviour: frame rate, failure handling, startup checks, display presence, MQTT |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Symptoms, causes and fixes |
-| [docs/design.md](docs/design.md) | The plane wall and the daemon, why the GStreamer wall used ffmpeg + FIFOs, what did not work, upstream state, planned Home Assistant integration |
+| [docs/design.md](docs/design.md) | The plane wall and the daemon, why the GStreamer wall used ffmpeg + FIFOs, what did not work, upstream state, Home Assistant integration |
 | [docs/measurements.md](docs/measurements.md) | CPU, temperature and power measurements on the reference Pi |
 | [docs/security.md](docs/security.md) | Token handling, service sandboxing, known exposures |
 | [TODO.md](TODO.md) | Open work, by phase |
