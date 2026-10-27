@@ -6,8 +6,9 @@ config file. Prints no password.
 
   tools/mqtt-test.py [--set MODE] [--wait SECONDS]
 
-  --set   also publish this mode (cameras, camera1..camera4, off) to <topic>/mode/set,
-          as Home Assistant would
+  --set   also publish this mode to <topic>/mode/set, as Home Assistant would: a
+          label (e.g. "All cameras", a CAMn_LABEL, "Off") or an id (cameras,
+          camera1..camera4, off); camwalld logs a value it does not know
   --wait  seconds to collect messages after logging in (default 3)
 
 Uses camwalld's own config reading and checks, so both agree on the settings.
@@ -46,14 +47,14 @@ def fail(name, text):
 
 
 def main():
-    camwalld = load_camwalld()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--set", choices=camwalld.MODES)
+    ap.add_argument("--set", metavar="MODE")
     ap.add_argument("--wait", type=float, default=3)
     args = ap.parse_args()
     if os.geteuid() != 0 and "CAMWALL_CONF" not in os.environ:
         os.execvp("sudo", ["sudo", sys.executable, os.path.abspath(__file__)] + sys.argv[1:])
 
+    camwalld = load_camwalld()
     camwalld.load_conf(CONF)
     cfg = camwalld.mqtt_settings()          # exits 78 with a message on a bad setting
     if cfg is None:

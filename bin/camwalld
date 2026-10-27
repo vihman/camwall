@@ -13,6 +13,9 @@ Configuration comes from the environment (systemd EnvironmentFile):
                                <NAME> in a URL is replaced with the value of the
                                config variable NAME (e.g. <STREAM_HOST>, <TOKEN1>).
                                The wall gets the expanded URLs in its environment.
+  CAM1_LABEL..CAM4_LABEL       optional: what MQTT, Home Assistant and the status call
+                               each camera (default "Camera 1".."Camera 4"; the other
+                               modes are "All cameras" and "Off")
   WALL                         planes or gstreamer (default planes)
   DISPLAY_PROBE                command that succeeds while the monitor is powered
                                (default "ddcutil --syslog never getvcp d6"; "none" disables).
@@ -122,9 +125,28 @@ def camera_urls():
     return urls
 
 
+def camera_labels():
+    """Mode id -> the text MQTT, Home Assistant and the status show for it."""
+    label = {"cameras": "All cameras", "off": "Off"}
+    seen = {t.lower() for t in MODES} | {t.lower() for t in label.values()}
+    for i in range(1, 5):
+        given = os.environ.get(f"CAM{i}_LABEL", "").strip()
+        text = given or f"Camera {i}"
+        if not 1 <= len(text) <= 32 or not text.isprintable():
+            config_error(f"CAM{i}_LABEL must be 1 to 32 printable characters (got '{text[:40]}')")
+        if text.lower() in seen:
+            config_error(f"CAM{i}_LABEL '{text}' is already used by another camera or mode"
+                         if given else f"CAM{i}_LABEL is unset, and its default '{text}' is "
+                         f"already used by another camera; set CAM{i}_LABEL")
+        seen.add(text.lower())
+        label[f"camera{i}"] = text
+    return label
+
+
 class Config:
     def __init__(self):
         self.urls = camera_urls()
+        self.label = camera_labels()
         self.wall = os.environ.get("WALL", "") or "planes"
         if self.wall not in WALLS:
             config_error(f"WALL must be one of {', '.join(WALLS)} (got '{self.wall}')")
@@ -306,11 +328,13 @@ class Mqtt:
     paho runs the connection, reconnects included, in its own thread; commands reach
     the main loop through a queue. A broker that is down never stops the wall."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, label):
         import paho.mqtt.client as mqtt   # mqtt_settings() checked that it exists
         env = os.environ.get
         self.host, self.port, self.topic = cfg["host"], cfg["port"], cfg["topic"]
         self.discovery, self.tls, self.ca = cfg["discovery"], cfg["tls"], cfg["ca"]
+        self.label = label             # mode id -> label; MQTT carries labels
+        self.mode_of = {text.lower(): mode for mode, lab in label.items() for text in (mode, lab)}
 
         self.commands = queue.SimpleQueue()
         self.state = {}          # sub-topic -> payload, republished on every connect
@@ -379,12 +403,18 @@ class Mqtt:
     def _on_disconnect(self, client, userdata, flags, reason, properties):
         self._lost(f"disconnected ({reason})")
 
+    def publish_mode(self, mode):
+        self.publish("mode", self.label[mode])
+
     def _on_message(self, client, userdata, msg):
-        mode = msg.payload.decode(errors="replace").strip()
-        if mode in MODES:
+        """A label in any letter case, or a mode id (cameras, camera1, ..., off)."""
+        text = msg.payload.decode(errors="replace").strip()
+        mode = self.mode_of.get(text.lower())
+        if mode:
             self.commands.put(mode)
         else:
-            log(f"mqtt: ignoring mode '{mode[:40]}' (expected one of {', '.join(MODES)})")
+            log(f"mqtt: ignoring mode '{text[:40]}' (expected one of "
+                f"{', '.join(self.label[m] for m in MODES)})")
 
     def _discovery_configs(self):
         t = self.topic
@@ -395,7 +425,8 @@ class Mqtt:
         return [
             (f"select/{uid}/mode", {**common, "name": "Mode", "unique_id": f"{uid}_mode",
                                     "command_topic": f"{t}/mode/set",
-                                    "state_topic": f"{t}/mode", "options": list(MODES)}),
+                                    "state_topic": f"{t}/mode",
+                                    "options": [self.label[m] for m in MODES]}),
             (f"sensor/{uid}/status", {**common, "name": "Status", "unique_id": f"{uid}_status",
                                       "state_topic": f"{t}/status", "icon": "mdi:monitor"}),
         ]
@@ -433,7 +464,7 @@ def main():
         return print_url(sys.argv[2])
     cfg = Config()
     mqtt_cfg = mqtt_settings()
-    mqtt = Mqtt(mqtt_cfg) if mqtt_cfg else None
+    mqtt = Mqtt(mqtt_cfg, cfg.label) if mqtt_cfg else None
 
     def on_term(signum, frame):
         raise Stop
@@ -461,7 +492,7 @@ def main():
 
     def running():
         n = LAYOUT[mode] if cfg.wall == "planes" else 0
-        return f"{cfg.wall} wall running" + (f", camera {n}" if n else "")
+        return f"{cfg.wall} wall running" + (f", {cfg.label[mode]}" if n else "")
 
     def status(msg):
         notify(f"STATUS={msg}")
@@ -474,7 +505,7 @@ def main():
     log(f"camwalld: {cfg.wall} wall, display probe "
         f"{'off' if cfg.probe is None else repr(shlex.join(cfg.probe))}, mode {mode}")
     if mqtt:
-        mqtt.publish("mode", mode)
+        mqtt.publish_mode(mode)
         mqtt.start()
     if mode == "off":
         status("off")
@@ -515,12 +546,12 @@ def main():
 
             while mqtt and not mqtt.commands.empty():
                 new = mqtt.commands.get()
-                mqtt.publish("mode", new)        # also answers a repeated command
+                mqtt.publish_mode(new)           # also answers a repeated command
                 if new == mode:
                     continue
                 prev, mode = mode, new
                 save_mode(mode)
-                log(f"mode {mode} (MQTT)")
+                log(f"mode {cfg.label[mode]} (MQTT)")
                 if mode == "off":
                     wall.stop()
                     status("off")
