@@ -37,9 +37,23 @@ sudo systemctl restart camwall
 
 Remove the line, or set `WALL=planes`, to switch back. Use the fallback if the plane wall misbehaves after a system update, or for a camera that can only send H.264: the plane wall refuses H.264 and logs `codec is not HEVC`.
 
+## Measuring and checking
+
+Three scripts in `tools/` print no tokens. Run them on the Pi:
+
+- `tools/measure.sh [--settle SECONDS] [--samples N]` prints:
+  - CPU idle samples, load, clock, temperature and throttling
+  - CMA memory and the wall's resident memory
+  - the busiest threads
+  - for each camera stream, its receive rate and socket backlog (the check below)
+
+  Use `--settle 180` right after a restart. It needs no root.
+- `tools/check-hwdec.sh [--ab]` finds the HEVC decoder device and the processes holding it, and turns the decoder's interrupt rate into decoded frames per second. That figure is about 120 for four cameras at 30 fps; the factor of two interrupts per frame is inferred, not documented. It also checks that ffmpeg has the `drm` hwaccel. `--ab` additionally compares 10 s of camera 1 decoded with and without the hardware. It uses sudo.
+- `tools/feed-info.sh N [SECONDS]` measures what camera N actually sends: codec, resolution, frame rate, bitrate and keyframe interval. With `-` instead of N it reads a token from stdin, so another stream of a camera (for example the High stream) can be checked before changing the configuration: `read -rs t; echo "$t" | tools/feed-info.sh -`. It uses sudo to read the configuration. While it measures, ffprobe's command line contains the token.
+
 ## Checking that the wall keeps up
 
-Both walls read each camera's stream from a network socket. If a wall cannot keep up, the backlog builds up in the sockets' receive queues; nothing after the decoder can grow a delay (the plane wall always shows the newest frame, and in the GStreamer wall the FIFOs and leaky queues hold at most a few frames). This estimates the queued delay per camera from the queued bytes and the stream's receive rate. It needs no `sudo` and shows no tokens:
+`tools/measure.sh` runs this check as part of its output. Both walls read each camera's stream from a network socket. If a wall cannot keep up, the backlog builds up in the sockets' receive queues; nothing after the decoder can grow a delay (the plane wall always shows the newest frame, and in the GStreamer wall the FIFOs and leaky queues hold at most a few frames). This estimates the queued delay per camera from the queued bytes and the stream's receive rate. It needs no `sudo` and shows no tokens:
 
 ```bash
 snap() { ss -tni '( dport = :7441 )' | awk '

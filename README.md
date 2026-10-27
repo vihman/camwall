@@ -86,6 +86,9 @@ The plane wall shows every camera frame and takes its tile size from the display
 | Disable autostart | `sudo systemctl disable --now camwall` |
 | Change settings or rotate tokens | `sudoedit /etc/camwall/camwall.conf`, then `sudo systemctl restart camwall` |
 | Update | `git pull && ./install.sh` |
+| Measure CPU, memory and stream backlog | `tools/measure.sh` |
+| Check hardware decoding | `tools/check-hwdec.sh` |
+| Codec, resolution, bitrate of camera N | `tools/feed-info.sh N` |
 
 A dead camera only blanks its own tile; the wall reconnects it by itself. If the wall process exits, the daemon restarts it with backoff; if the daemon hangs, the systemd watchdog restarts the service. A configuration error exits with status 78 and is not retried. See [docs/operation.md](docs/operation.md) for failure handling, startup checks, display presence and frame rate, and [docs/troubleshooting.md](docs/troubleshooting.md) when something looks wrong.
 
@@ -111,6 +114,7 @@ bin/camwall                    the GStreamer wall, the fallback (/usr/local/bin/
 systemd/camwall.service        the service unit
 config/camwall.conf.example    template for /etc/camwall/camwall.conf (secrets live only there)
 install.sh                     installs or updates everything, safe to re-run
+tools/                         measure.sh, check-hwdec.sh, feed-info.sh (see docs/operation.md)
 docs/                          detailed documentation (see above)
 TODO.md                        open tasks, by phase
 ```

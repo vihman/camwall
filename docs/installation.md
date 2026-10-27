@@ -101,7 +101,7 @@ ffmpeg's `-hwaccel` option can fall back to software decoding silently, so check
 - **CPU cost.** Four concurrent streams cost about 1.9-2.0 s of CPU time per camera over a ~9.5 s run with `-hwaccel drm`, against 4.3-4.9 s without it.
 - **Kernel driver message.** `dmesg` showed a line from the decoder's kernel driver (`rpi-hevc-dec feb00000.codec: Missing inuse DPB ent 0, timestamp=0`) at the start of the hardware-decode runs that were checked, and not during software-decode runs.
 
-To repeat the checks on your own Pi while the wall (or any `-hwaccel drm` ffmpeg) is running:
+`tools/check-hwdec.sh` runs checks 1 and 2 below, and with `--ab` also check 3. To repeat the checks by hand while the wall (or any `-hwaccel drm` ffmpeg) is running:
 
 ```bash
 # 1. The decoder device node should be held open by the ffmpeg processes

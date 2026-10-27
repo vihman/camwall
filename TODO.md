@@ -19,13 +19,7 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
 - [x] Soak under camwalld, 2026-10-26 10:57 to 2026-10-27 09:24: one wall process for 22.5 h with no restart, through a dusk and a dawn. 74.5 MB resident and 440 MB CMA free at the end. That is the same level as the previous run after its first dawn, so the dawn step is a one-time buffer growth, not a leak. No false `display lost` with the monitor on. A dead camera under camwalld blanks only its own tile (several cameras restarted on 2026-10-26).
 - [ ] Restrict devices: check the `char-*` class names in `/proc/devices` (drm, video4linux, media, dma_heap, i2c), add `DevicePolicy=closed` + `DeviceAllow=` to the unit, and test both walls.
 - [ ] Consider `SystemCallFilter=@system-service` and `MemoryDenyWriteExecute=`. Python and the plane wall should cope; the GStreamer fallback may not (ORC JIT), so test it too.
-- [ ] Add `tools/measure.sh`:
-  - 3 CPU samples after a settle
-  - clock, temperature and `get_throttled`
-  - `CmaFree`/`CmaTotal`
-  - the receive-queue check from docs/operation.md
-  
-  Also add `tools/check-hwdec.sh` with the decoder checks from docs/installation.md.
+- [x] `tools/measure.sh`, `tools/check-hwdec.sh` and `tools/feed-info.sh` added (2026-10-27). The feed parsing was tested against stub ffprobe output; still to run on the Pi.
 
 ## Phase 2b: C helper improvements
 
