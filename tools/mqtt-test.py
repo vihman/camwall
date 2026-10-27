@@ -7,8 +7,8 @@ config file. Prints no password.
   tools/mqtt-test.py [--set MODE] [--wait SECONDS]
 
   --set   also publish this mode to <topic>/mode/set, as Home Assistant would: a
-          label (e.g. "All cameras", a CAMn_LABEL, "Off") or an id (cameras,
-          camera1..camera4, off); camwalld logs a value it does not know
+          label (e.g. "All cameras", a CAMn_LABEL) or an id (cameras,
+          camera1..camera4); camwalld logs a value it does not know
   --wait  seconds to collect messages after logging in (default 3)
 
 Uses camwalld's own config reading and checks, so both agree on the settings.

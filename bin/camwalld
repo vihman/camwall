@@ -15,7 +15,7 @@ Configuration comes from the environment (systemd EnvironmentFile):
                                The wall gets the expanded URLs in its environment.
   CAM1_LABEL..CAM4_LABEL       optional: what MQTT, Home Assistant and the status call
                                each camera (default "Camera 1".."Camera 4"; the other
-                               modes are "All cameras" and "Off")
+                               grid is "All cameras")
   WALL                         planes or gstreamer (default planes)
   DISPLAY_PROBE                command that succeeds while the monitor is powered
                                (default "ddcutil --syslog never getvcp d6"; "none" disables).
@@ -32,8 +32,8 @@ Configuration comes from the environment (systemd EnvironmentFile):
                                (camwall-<hostname>), MQTT_DISCOVERY (Home Assistant
                                discovery prefix, default homeassistant; none disables).
                                Topics: <topic>/availability, <topic>/mode, <topic>/mode/set
-                               (cameras, camera1..camera4, off), <topic>/status. Needs
-                               python3-paho-mqtt.
+                               (cameras, camera1..camera4, or their labels), <topic>/status,
+                               <topic>/display (on/off). Needs python3-paho-mqtt.
 The GStreamer wall reads its own settings (FPS, TILE_*, STREAM_TIMEOUT) itself.
 
 A configuration error exits with 78 (EX_CONFIG), which the unit does not restart on.
@@ -64,7 +64,7 @@ WALLS = {"planes": "camwall-planes", "gstreamer": "camwall"}
 BACKOFF = (2, 4, 8, 16, 30)   # seconds before restarting a wall that exited
 HEALTHY = 60                  # a wall that ran this long resets the backoff
 STOP_GRACE = 10               # seconds between SIGTERM and SIGKILL
-MODES = ("cameras", "camera1", "camera2", "camera3", "camera4", "off")   # first is the default
+MODES = ("cameras", "camera1", "camera2", "camera3", "camera4")   # first is the default
 LAYOUT = {"cameras": 0, "camera1": 1, "camera2": 2, "camera3": 3, "camera4": 4}   # 0 = 2x2 grid
 STATE_DIR = os.environ.get("STATE_DIRECTORY")   # /var/lib/camwall under systemd
 
@@ -127,7 +127,7 @@ def camera_urls():
 
 def camera_labels():
     """Mode id -> the text MQTT, Home Assistant and the status show for it."""
-    label = {"cameras": "All cameras", "off": "Off"}
+    label = {"cameras": "All cameras"}
     seen = {t.lower() for t in MODES} | {t.lower() for t in label.values()}
     for i in range(1, 5):
         given = os.environ.get(f"CAM{i}_LABEL", "").strip()
@@ -407,7 +407,7 @@ class Mqtt:
         self.publish("mode", self.label[mode])
 
     def _on_message(self, client, userdata, msg):
-        """A label in any letter case, or a mode id (cameras, camera1, ..., off)."""
+        """A label in any letter case, or a mode id (cameras, camera1..camera4)."""
         text = msg.payload.decode(errors="replace").strip()
         mode = self.mode_of.get(text.lower())
         if mode:
@@ -428,7 +428,12 @@ class Mqtt:
                                     "state_topic": f"{t}/mode",
                                     "options": [self.label[m] for m in MODES]}),
             (f"sensor/{uid}/status", {**common, "name": "Status", "unique_id": f"{uid}_status",
-                                      "state_topic": f"{t}/status", "icon": "mdi:monitor"}),
+                                      "state_topic": f"{t}/status", "icon": "mdi:information-outline"}),
+            (f"binary_sensor/{uid}/display", {**common, "name": "Display",
+                                              "unique_id": f"{uid}_display",
+                                              "state_topic": f"{t}/display",
+                                              "payload_on": "on", "payload_off": "off",
+                                              "icon": "mdi:monitor"}),
         ]
 
 
@@ -500,17 +505,16 @@ def main():
             mqtt.publish("status", msg)
 
     wall = Wall(cfg)
-    mode = load_mode() if mqtt else MODES[0]   # without MQTT nothing could undo a saved off
+    mode = load_mode() if mqtt else MODES[0]   # without MQTT nothing could change a saved view
     notify("READY=1")
     log(f"camwalld: {cfg.wall} wall, display probe "
         f"{'off' if cfg.probe is None else repr(shlex.join(cfg.probe))}, mode {mode}")
     if mqtt:
         mqtt.publish_mode(mode)
         mqtt.start()
-    if mode == "off":
-        status("off")
 
     present = None        # None until the first probe
+    shown = None          # display state last published over MQTT
     fails = 0
     restarts = 0
     restart_at = 0.0      # monotonic time when an exited wall may start again
@@ -540,26 +544,21 @@ def main():
                             log(f"display lost ({fails} failed probes: {why}), stopping the wall")
                             wall.stop()
                         log(f"no display detected ({why}), idle until it returns")
-                        if mode != "off":
-                            status(f"no display, idle ({why})")
+                        status(f"no display, idle ({why})")
                         present = False
+                if mqtt and present is not None and present != shown:
+                    mqtt.publish("display", "on" if present else "off")
+                    shown = present
 
             while mqtt and not mqtt.commands.empty():
                 new = mqtt.commands.get()
                 mqtt.publish_mode(new)           # also answers a repeated command
                 if new == mode:
                     continue
-                prev, mode = mode, new
+                mode = new
                 save_mode(mode)
                 log(f"mode {cfg.label[mode]} (MQTT)")
-                if mode == "off":
-                    wall.stop()
-                    status("off")
-                elif prev == "off":
-                    restart_at = 0.0             # start below, in the new layout
-                    if not present:
-                        status("no display, idle")
-                elif wall.proc is not None:
+                if wall.proc is not None:        # else the wall starts in this layout later
                     wall.set_layout(LAYOUT[mode])
                     status(running())
 
@@ -577,7 +576,7 @@ def main():
                 wall.stop()   # clears leftovers in its process group
                 restart_at = time.monotonic() + delay
 
-            if mode != "off" and present and wall.proc is None and time.monotonic() >= restart_at:
+            if present and wall.proc is None and time.monotonic() >= restart_at:
                 wall.start(LAYOUT[mode])
                 status(running())
 
