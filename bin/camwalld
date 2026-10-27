@@ -48,6 +48,7 @@ import shlex
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -254,6 +255,7 @@ class Mqtt:
         c.on_disconnect = self._on_disconnect
         c.on_message = self._on_message
         self.client = c
+        self.tls, self.ca = tls == "yes", ca
 
     def start(self):
         log(f"mqtt: {self.host}:{self.port}, topic {self.topic}, discovery "
@@ -296,7 +298,30 @@ class Mqtt:
             client.publish(f"{t}/{sub}", payload, qos=1, retain=True)
 
     def _on_connect_fail(self, client, userdata):
-        self._lost(f"cannot connect to {self.host}:{self.port}")
+        if not self.down and not self.stopping:
+            self._lost(f"cannot connect to {self.host}:{self.port} ({self._why()})")
+
+    def _why(self):
+        """paho does not report why a connection failed, so repeat the steps it
+        takes (TCP, then TLS with certificate and host name checks) and name the
+        first one that fails."""
+        try:
+            sock = socket.create_connection((self.host, self.port), timeout=5)
+        except OSError as e:
+            return e.strerror or str(e)
+        with sock:
+            if not self.tls:
+                return "TCP works; the MQTT handshake failed"
+            try:
+                ssl.create_default_context(cafile=self.ca).wrap_socket(
+                    sock, server_hostname=self.host).close()
+            except ssl.SSLCertVerificationError as e:
+                return f"TLS certificate: {e.verify_message}"
+            except ssl.SSLError as e:
+                return f"TLS: {e.reason or e}"
+            except OSError:
+                return "TLS handshake timed out; is this a TLS port?"
+        return "TCP and TLS work; the MQTT handshake failed"
 
     def _on_disconnect(self, client, userdata, flags, reason, properties):
         self._lost(f"disconnected ({reason})")
