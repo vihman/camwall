@@ -22,6 +22,13 @@ Configuration comes from the environment (systemd EnvironmentFile):
   PROBE_INTERVAL               seconds between probes (default 5)
   PROBE_FAILS                  consecutive failed probes before the wall stops (default 3)
   PROBE_SETTLE                 seconds to wait after the display returns (default 3)
+  MQTT_HOST                    MQTT broker; unset = no MQTT. With it: MQTT_PORT (1883,
+                               8883 with TLS), MQTT_USER, MQTT_PASSWORD, MQTT_TLS (yes/no),
+                               MQTT_CA_FILE, MQTT_TOPIC (camwall), MQTT_CLIENT_ID
+                               (camwall-<hostname>), MQTT_DISCOVERY (Home Assistant
+                               discovery prefix, default homeassistant; none disables).
+                               Topics: <topic>/availability, <topic>/mode, <topic>/mode/set
+                               (cameras|off), <topic>/status. Needs python3-paho-mqtt.
 The GStreamer wall reads its own settings (FPS, TILE_*, STREAM_TIMEOUT) itself.
 
 A configuration error exits with 78 (EX_CONFIG), which the unit does not restart on.
@@ -33,7 +40,9 @@ this daemon exit with 78 too.
                        tools in tools/
 """
 
+import json
 import os
+import queue
 import re
 import shlex
 import shutil
@@ -49,6 +58,8 @@ WALLS = {"planes": "camwall-planes", "gstreamer": "camwall"}
 BACKOFF = (2, 4, 8, 16, 30)   # seconds before restarting a wall that exited
 HEALTHY = 60                  # a wall that ran this long resets the backoff
 STOP_GRACE = 10               # seconds between SIGTERM and SIGKILL
+MODES = ("cameras", "off")    # first is the default
+STATE_DIR = os.environ.get("STATE_DIRECTORY")   # /var/lib/camwall under systemd
 
 
 def log(msg):
@@ -137,6 +148,8 @@ class Wall:
     def start(self):
         env = dict(os.environ)
         env["DISPLAY_PROBE"] = "none"   # the GStreamer wall must not probe on its own
+        for k in [k for k in env if k.startswith("MQTT_")]:
+            del env[k]                  # the broker password stays in this process
         for i, url in enumerate(self.cfg.urls, 1):
             env[f"CAM{i}_URL"] = url
         self.proc = subprocess.Popen([self.cfg.wall_cmd], env=env, start_new_session=True,
@@ -176,6 +189,140 @@ class Stop(Exception):
     pass
 
 
+def load_mode():
+    """The mode last set over MQTT, kept across restarts in the state directory."""
+    try:
+        with open(os.path.join(STATE_DIR, "mode")) as f:
+            mode = f.read().strip()
+        return mode if mode in MODES else MODES[0]
+    except (OSError, TypeError):
+        return MODES[0]
+
+
+def save_mode(mode):
+    if not STATE_DIR:
+        return
+    try:
+        with open(os.path.join(STATE_DIR, "mode"), "w") as f:
+            f.write(mode + "\n")
+    except OSError as e:
+        log(f"cannot save the mode: {e.strerror}")
+
+
+class Mqtt:
+    """Plain-text topics under MQTT_TOPIC, plus optional Home Assistant discovery.
+    paho runs the connection, reconnects included, in its own thread; commands reach
+    the main loop through a queue. A broker that is down never stops the wall."""
+
+    def __init__(self):
+        try:
+            import paho.mqtt.client as mqtt
+        except ImportError:
+            config_error("MQTT_HOST is set, but paho-mqtt is missing (apt install python3-paho-mqtt)")
+        env = os.environ.get
+        tls = env("MQTT_TLS", "") or "no"
+        if tls not in ("yes", "no"):
+            config_error(f"MQTT_TLS must be yes or no (got '{tls}')")
+        self.host = env("MQTT_HOST")
+        self.port = int_in("MQTT_PORT", 8883 if tls == "yes" else 1883, 1, 65535)
+        self.topic = (env("MQTT_TOPIC", "") or "camwall").strip("/")
+        self.discovery = env("MQTT_DISCOVERY", "") or "homeassistant"
+        for name, value in (("MQTT_TOPIC", self.topic), ("MQTT_DISCOVERY", self.discovery)):
+            if not value or re.search(r"[+#\s]", value):
+                config_error(f"{name} must be a topic without spaces, + or # (got '{value}')")
+        if self.discovery == "none":
+            self.discovery = None
+        ca = env("MQTT_CA_FILE", "") or None
+        if ca and not os.access(ca, os.R_OK):
+            config_error(f"MQTT_CA_FILE {ca} is missing or not readable")
+
+        self.commands = queue.SimpleQueue()
+        self.state = {}          # sub-topic -> payload, republished on every connect
+        self.down = False        # log a lost connection once, not every retry
+        self.stopping = False
+        c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                        client_id=env("MQTT_CLIENT_ID", "") or f"camwall-{socket.gethostname()}",
+                        protocol=mqtt.MQTTv311)
+        if env("MQTT_USER"):
+            c.username_pw_set(env("MQTT_USER"), env("MQTT_PASSWORD") or None)
+        if tls == "yes":
+            c.tls_set(ca_certs=ca)
+        c.will_set(f"{self.topic}/availability", "offline", qos=1, retain=True)
+        c.reconnect_delay_set(1, 60)
+        c.on_connect = self._on_connect
+        c.on_connect_fail = self._on_connect_fail
+        c.on_disconnect = self._on_disconnect
+        c.on_message = self._on_message
+        self.client = c
+
+    def start(self):
+        log(f"mqtt: {self.host}:{self.port}, topic {self.topic}, discovery "
+            f"{self.discovery or 'off'}")
+        self.client.connect_async(self.host, self.port, keepalive=30)
+        self.client.loop_start()
+
+    def stop(self):
+        self.stopping = True
+        if self.client.is_connected():   # otherwise the broker sends the Last Will
+            self.client.publish(f"{self.topic}/availability", "offline", qos=1,
+                                retain=True).wait_for_publish(2)
+        self.client.disconnect()
+        self.client.loop_stop()
+
+    def publish(self, sub, payload):
+        """Retained state; kept for the next connect if the broker is unreachable now."""
+        self.state[sub] = payload
+        self.client.publish(f"{self.topic}/{sub}", payload, qos=1, retain=True)
+
+    def _lost(self, why):
+        if not self.down and not self.stopping:
+            log(f"mqtt: {why}, retrying")
+            self.down = True
+
+    def _on_connect(self, client, userdata, flags, reason, properties):
+        if reason.is_failure:
+            self._lost(f"connection refused ({reason})")
+            return
+        log(f"mqtt: connected to {self.host}:{self.port}")
+        self.down = False
+        t = self.topic
+        client.subscribe(f"{t}/mode/set", qos=1)
+        client.publish(f"{t}/availability", "online", qos=1, retain=True)
+        if self.discovery:
+            for kind, config in self._discovery_configs():
+                client.publish(f"{self.discovery}/{kind}/config", json.dumps(config),
+                               qos=1, retain=True)
+        for sub, payload in list(self.state.items()):
+            client.publish(f"{t}/{sub}", payload, qos=1, retain=True)
+
+    def _on_connect_fail(self, client, userdata):
+        self._lost(f"cannot connect to {self.host}:{self.port}")
+
+    def _on_disconnect(self, client, userdata, flags, reason, properties):
+        self._lost(f"disconnected ({reason})")
+
+    def _on_message(self, client, userdata, msg):
+        mode = msg.payload.decode(errors="replace").strip()
+        if mode in MODES:
+            self.commands.put(mode)
+        else:
+            log(f"mqtt: ignoring mode '{mode[:40]}' (expected {' or '.join(MODES)})")
+
+    def _discovery_configs(self):
+        t = self.topic
+        uid = re.sub(r"[^A-Za-z0-9_-]", "_", t)
+        device = {"identifiers": [uid], "name": t, "model": "camwall",
+                  "manufacturer": "camwall"}
+        common = {"availability_topic": f"{t}/availability", "device": device}
+        return [
+            (f"select/{uid}/mode", {**common, "name": "Mode", "unique_id": f"{uid}_mode",
+                                    "command_topic": f"{t}/mode/set",
+                                    "state_topic": f"{t}/mode", "options": list(MODES)}),
+            (f"sensor/{uid}/status", {**common, "name": "Status", "unique_id": f"{uid}_status",
+                                      "state_topic": f"{t}/status", "icon": "mdi:monitor"}),
+        ]
+
+
 def load_conf(path):
     """KEY=value lines into the environment, as systemd's EnvironmentFile= reads
     them. The file cannot be sourced by a shell: <NAME> would be a redirection."""
@@ -207,6 +354,7 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--url":
         return print_url(sys.argv[2])
     cfg = Config()
+    mqtt = Mqtt() if os.environ.get("MQTT_HOST") else None
 
     def on_term(signum, frame):
         raise Stop
@@ -234,11 +382,19 @@ def main():
 
     def status(msg):
         notify(f"STATUS={msg}")
+        if mqtt:
+            mqtt.publish("status", msg)
 
     wall = Wall(cfg)
+    mode = load_mode()
     notify("READY=1")
     log(f"camwalld: {cfg.wall} wall, display probe "
-        f"{'off' if cfg.probe is None else repr(shlex.join(cfg.probe))}")
+        f"{'off' if cfg.probe is None else repr(shlex.join(cfg.probe))}, mode {mode}")
+    if mqtt:
+        mqtt.publish("mode", mode)
+        mqtt.start()
+    if mode == "off":
+        status("off")
 
     present = None        # None until the first probe
     fails = 0
@@ -270,8 +426,25 @@ def main():
                             log(f"display lost ({fails} failed probes: {why}), stopping the wall")
                             wall.stop()
                         log(f"no display detected ({why}), idle until it returns")
-                        status(f"no display, idle ({why})")
+                        if mode != "off":
+                            status(f"no display, idle ({why})")
                         present = False
+
+            while mqtt and not mqtt.commands.empty():
+                new = mqtt.commands.get()
+                mqtt.publish("mode", new)        # also answers a repeated command
+                if new == mode:
+                    continue
+                mode = new
+                save_mode(mode)
+                log(f"mode {mode} (MQTT)")
+                if mode == "off":
+                    wall.stop()
+                    status("off")
+                else:
+                    restart_at = 0.0
+                    if not present:
+                        status("no display, idle")
 
             rc = wall.exited()
             if rc is not None:
@@ -287,7 +460,7 @@ def main():
                 wall.stop()   # clears leftovers in its process group
                 restart_at = time.monotonic() + delay
 
-            if present and wall.proc is None and time.monotonic() >= restart_at:
+            if mode != "off" and present and wall.proc is None and time.monotonic() >= restart_at:
                 wall.start()
                 status(f"{cfg.wall} wall running")
 
@@ -295,6 +468,8 @@ def main():
     except Stop:
         notify("STOPPING=1")
         wall.stop()
+        if mqtt:
+            mqtt.stop()
 
 
 if __name__ == "__main__":
