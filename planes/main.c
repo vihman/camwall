@@ -61,7 +61,7 @@ int main(void)
     if ((e = getenv("CAMS")) && atoi(e) >= 1 && atoi(e) <= MAXCAM) ncam = atoi(e);
     if ((e = getenv("WALL_FPS")) && atoi(e) >= 1 && atoi(e) <= 60) fps = atoi(e);
     for (int i = 0; i < ncam; i++) {
-        char var[16];
+        char var[24];
         snprintf(var, sizeof var, "CAM%d_URL", i + 1);
         const char *url = getenv(var);
         if (!url || !*url) { fprintf(stderr, "%s not set\n", var); return 78; }
