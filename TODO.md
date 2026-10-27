@@ -16,10 +16,11 @@ Passed on 2026-10-26/27: camwalld runs the plane wall from boot with the monitor
 
 Design in [docs/design.md](docs/design.md#home-assistant-integration).
 - [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
-- [ ] MQTT in the daemon, built 2026-10-27 (generic topics, optional TLS, HA discovery on by default; see [docs/operation.md](docs/operation.md#mqtt)). Tested against a local broker with a stub wall; on the Pi still to test against the HA Mosquitto add-on: the HA entities, `off`/`cameras`, the mode surviving a restart, a broker outage. TLS untested on the Pi; `tools/mqtt-test.py` tested here against a local broker and a local TLS listener.
+- [ ] MQTT in the daemon, built 2026-10-27 (generic topics, optional TLS, HA discovery on by default; see [docs/operation.md](docs/operation.md#mqtt)). On the Pi it connects over TLS (Let's Encrypt certificate) to the HA Mosquitto add-on and publishes its state and the discovery configs (2026-10-27). Still to test: the entities in HA, `off`/`cameras` from HA, the mode surviving a restart, a broker outage.
 - [ ] Remote button in HA, mapped to the select entity. Candidate: a Sonoff Zigbee button through Zigbee2MQTT instead of the BILRESA; details to be agreed.
 - [ ] Info mode: run a Chromium kiosk under `cage` as a daemon child, mutually exclusive with the camera wall. Authenticate with a non-admin HA user's long-lived token, or with `trusted_networks` limited to the Pi.
-- [ ] Later modes: a single camera full screen.
+- [ ] Single-camera modes `camera1`..`camera4` (2026-10-27, switched live over the wall's stdin): tested off the Pi with a stub wall and the local broker; the C part not yet built. On the Pi check the full-screen picture, switching without flicker, `off` -> `cameraN`, and a camera restart in single view.
+- [ ] Sharper single cameras, if the upscaled 720p looks too soft: an optional `CAMn_FULL_URL` (e.g. the High stream) used only in single mode.
 
 ## Phase 4: Repository hygiene (any time)
 
