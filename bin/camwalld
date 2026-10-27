@@ -29,7 +29,8 @@ Configuration comes from the environment (systemd EnvironmentFile):
                                (camwall-<hostname>), MQTT_DISCOVERY (Home Assistant
                                discovery prefix, default homeassistant; none disables).
                                Topics: <topic>/availability, <topic>/mode, <topic>/mode/set
-                               (cameras|off), <topic>/status. Needs python3-paho-mqtt.
+                               (cameras, camera1..camera4, off), <topic>/status. Needs
+                               python3-paho-mqtt.
 The GStreamer wall reads its own settings (FPS, TILE_*, STREAM_TIMEOUT) itself.
 
 A configuration error exits with 78 (EX_CONFIG), which the unit does not restart on.
@@ -60,7 +61,8 @@ WALLS = {"planes": "camwall-planes", "gstreamer": "camwall"}
 BACKOFF = (2, 4, 8, 16, 30)   # seconds before restarting a wall that exited
 HEALTHY = 60                  # a wall that ran this long resets the backoff
 STOP_GRACE = 10               # seconds between SIGTERM and SIGKILL
-MODES = ("cameras", "off")    # first is the default
+MODES = ("cameras", "camera1", "camera2", "camera3", "camera4", "off")   # first is the default
+LAYOUT = {"cameras": 0, "camera1": 1, "camera2": 2, "camera3": 3, "camera4": 4}   # 0 = 2x2 grid
 STATE_DIR = os.environ.get("STATE_DIRECTORY")   # /var/lib/camwall under systemd
 
 
@@ -146,18 +148,42 @@ class Wall:
         self.cfg = cfg
         self.proc = None
         self.started = 0.0
+        self.warned_layout = False
 
-    def start(self):
+    def start(self, layout):
+        """Start in layout 0 (the 2x2 grid) or N (camera N full screen)."""
         env = dict(os.environ)
+        env["WALL_LAYOUT"] = str(self._layout(layout))
         env["DISPLAY_PROBE"] = "none"   # the GStreamer wall must not probe on its own
         for k in [k for k in env if k.startswith("MQTT_")]:
             del env[k]                  # the broker password stays in this process
         for i, url in enumerate(self.cfg.urls, 1):
             env[f"CAM{i}_URL"] = url
+        # the plane wall takes "layout N" lines on stdin
         self.proc = subprocess.Popen([self.cfg.wall_cmd], env=env, start_new_session=True,
-                                     stdin=subprocess.DEVNULL)
+                                     stdin=subprocess.PIPE if self.cfg.wall == "planes"
+                                     else subprocess.DEVNULL)
         self.started = time.monotonic()
         log(f"started the {self.cfg.wall} wall (pid {self.proc.pid})")
+
+    def set_layout(self, layout):
+        """Switch the running wall's layout without restarting it."""
+        layout = self._layout(layout)
+        if self.proc is None or self.proc.stdin is None:
+            return
+        try:
+            self.proc.stdin.write(f"layout {layout}\n".encode())
+            self.proc.stdin.flush()
+        except OSError:
+            pass                        # the wall died; the exit check handles it
+
+    def _layout(self, layout):
+        if layout and self.cfg.wall != "planes":
+            if not self.warned_layout:
+                log("single-camera modes need WALL=planes; the GStreamer wall shows the grid")
+                self.warned_layout = True
+            return 0
+        return layout
 
     def exited(self):
         """Exit status if the wall has exited, else None."""
@@ -178,6 +204,11 @@ class Wall:
                 self._signal(signal.SIGKILL)
                 self.proc.wait()
         self._signal(signal.SIGKILL)   # leftovers in the group, e.g. ffmpeg
+        if self.proc.stdin:
+            try:
+                self.proc.stdin.close()
+            except OSError:
+                pass
         self.proc = None
 
     def _signal(self, sig):
@@ -353,7 +384,7 @@ class Mqtt:
         if mode in MODES:
             self.commands.put(mode)
         else:
-            log(f"mqtt: ignoring mode '{mode[:40]}' (expected {' or '.join(MODES)})")
+            log(f"mqtt: ignoring mode '{mode[:40]}' (expected one of {', '.join(MODES)})")
 
     def _discovery_configs(self):
         t = self.topic
@@ -428,6 +459,10 @@ def main():
             return None, reason
         return r.returncode == 0, reason
 
+    def running():
+        n = LAYOUT[mode] if cfg.wall == "planes" else 0
+        return f"{cfg.wall} wall running" + (f", camera {n}" if n else "")
+
     def status(msg):
         notify(f"STATUS={msg}")
         if mqtt:
@@ -483,16 +518,19 @@ def main():
                 mqtt.publish("mode", new)        # also answers a repeated command
                 if new == mode:
                     continue
-                mode = new
+                prev, mode = mode, new
                 save_mode(mode)
                 log(f"mode {mode} (MQTT)")
                 if mode == "off":
                     wall.stop()
                     status("off")
-                else:
-                    restart_at = 0.0
+                elif prev == "off":
+                    restart_at = 0.0             # start below, in the new layout
                     if not present:
                         status("no display, idle")
+                elif wall.proc is not None:
+                    wall.set_layout(LAYOUT[mode])
+                    status(running())
 
             rc = wall.exited()
             if rc is not None:
@@ -509,8 +547,8 @@ def main():
                 restart_at = time.monotonic() + delay
 
             if mode != "off" and present and wall.proc is None and time.monotonic() >= restart_at:
-                wall.start()
-                status(f"{cfg.wall} wall running")
+                wall.start(LAYOUT[mode])
+                status(running())
 
             time.sleep(1)
     except Stop:
