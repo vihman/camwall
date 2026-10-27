@@ -75,7 +75,7 @@ Everything lives in `/etc/camwall/camwall.conf` (root:root, 0600, never in the r
 | `WALL` | `planes` | `planes` (decode to display planes) or `gstreamer` (the older wall, as a fallback) |
 | `DISPLAY_PROBE` | `ddcutil --syslog never getvcp d6` | Command that succeeds while the monitor is powered; `none` disables the check |
 | `PROBE_INTERVAL`, `PROBE_FAILS`, `PROBE_SETTLE` | 5, 3, 3 | Probe period, failures before stopping, delay after the display returns |
-| `MQTT_HOST` | (unset = off) | MQTT broker for control and status; the other `MQTT_*` settings are in [docs/operation.md](docs/operation.md#mqtt) |
+| `MQTT` | `no` | `yes`: control and status over MQTT; the `MQTT_*` settings are in [docs/operation.md](docs/operation.md#mqtt) |
 
 The plane wall shows every camera frame and takes its tile size from the display mode. `FPS`, `TILE_WIDTH`, `TILE_HEIGHT` and `STREAM_TIMEOUT` apply only to the GStreamer wall (see [docs/operation.md](docs/operation.md#the-gstreamer-wall-fallback)).
 
@@ -93,6 +93,7 @@ The plane wall shows every camera frame and takes its tile size from the display
 | Check hardware decoding | `tools/check-hwdec.sh` |
 | Codec, resolution, bitrate of camera N | `tools/feed-info.sh N` |
 | Switch the wall on or off remotely | publish `cameras` or `off` to `camwall/mode/set` over MQTT |
+| Check the MQTT settings and connection | `tools/mqtt-test.py` |
 
 A dead camera only blanks its own tile; the wall reconnects it by itself. If the wall process exits, the daemon restarts it with backoff; if the daemon hangs, the systemd watchdog restarts the service. A configuration error exits with status 78 and is not retried. See [docs/operation.md](docs/operation.md) for failure handling, startup checks, display presence and frame rate, and [docs/troubleshooting.md](docs/troubleshooting.md) when something looks wrong.
 
@@ -118,7 +119,7 @@ bin/camwall                    the GStreamer wall, the fallback (/usr/local/bin/
 systemd/camwall.service        the service unit
 config/camwall.conf.example    template for /etc/camwall/camwall.conf (secrets live only there)
 install.sh                     installs or updates everything, safe to re-run
-tools/                         measure.sh, check-hwdec.sh, feed-info.sh (see docs/operation.md)
+tools/                         measure.sh, check-hwdec.sh, feed-info.sh, mqtt-test.py (see docs/operation.md)
 docs/                          detailed documentation (see above)
 TODO.md                        open tasks, by phase
 ```

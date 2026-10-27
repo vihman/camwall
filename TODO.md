@@ -16,7 +16,7 @@ Passed on 2026-10-26/27: camwalld runs the plane wall from boot with the monitor
 
 Design in [docs/design.md](docs/design.md#home-assistant-integration).
 - [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
-- [ ] MQTT in the daemon, built 2026-10-27 (generic topics, optional TLS, HA discovery on by default; see [docs/operation.md](docs/operation.md#mqtt)). Tested against a local broker with a stub wall; on the Pi still to test against the HA Mosquitto add-on: the HA entities, `off`/`cameras`, the mode surviving a restart, a broker outage. TLS untested.
+- [ ] MQTT in the daemon, built 2026-10-27 (generic topics, optional TLS, HA discovery on by default; see [docs/operation.md](docs/operation.md#mqtt)). Tested against a local broker with a stub wall; on the Pi still to test against the HA Mosquitto add-on: the HA entities, `off`/`cameras`, the mode surviving a restart, a broker outage. TLS untested on the Pi; `tools/mqtt-test.py` tested here against a local broker and a local TLS listener.
 - [ ] Remote button in HA, mapped to the select entity. Candidate: a Sonoff Zigbee button through Zigbee2MQTT instead of the BILRESA; details to be agreed.
 - [ ] Info mode: run a Chromium kiosk under `cage` as a daemon child, mutually exclusive with the camera wall. Authenticate with a non-admin HA user's long-lived token, or with `trusted_networks` limited to the Pi.
 - [ ] Later modes: a single camera full screen.

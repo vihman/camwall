@@ -59,11 +59,13 @@ CAM4_URL=rtsps://192.168.1.20:8443/live
 #PROBE_SETTLE=3
 
 # --- MQTT (optional) ----------------------------------------------------------
-# Control and status over any MQTT broker. Off while MQTT_HOST is unset.
+# Control and status over any MQTT broker. Off unless MQTT=yes; the other MQTT_*
+# settings are then read. Check them with tools/mqtt-test.py.
 # Topics: <MQTT_TOPIC>/mode/set (send cameras or off), <MQTT_TOPIC>/mode,
 # <MQTT_TOPIC>/status and <MQTT_TOPIC>/availability (retained, plain text).
 # <NAME> templates are not expanded here.
 
+#MQTT=no
 #MQTT_HOST=broker.example.com
 # 1883, or 8883 with MQTT_TLS=yes
 #MQTT_PORT=1883

@@ -28,11 +28,12 @@ Why DDC/CI and not the HDMI connector status, and what the probe costs: see [Des
 
 ## MQTT
 
-Optional. With `MQTT_HOST` set, camwalld connects to that broker and can be switched on and off over MQTT. Any MQTT 3.1.1 broker and any controller works (Home Assistant, Node-RED, openHAB, or `mosquitto_pub` by hand). The payloads are plain text. It needs `python3-paho-mqtt`, which `install.sh` installs.
+Optional, off by default. With `MQTT=yes`, camwalld connects to the broker in `MQTT_HOST` and can be switched on and off over MQTT. Any MQTT 3.1.1 broker and any controller works (Home Assistant, Node-RED, openHAB, or `mosquitto_pub` by hand). The payloads are plain text. It needs `python3-paho-mqtt`, which `install.sh` installs.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `MQTT_HOST` | (unset = off) | Broker name or IP |
+| `MQTT` | `no` | `yes` turns MQTT on; with `no` the other settings are ignored |
+| `MQTT_HOST` | (required with `MQTT=yes`) | Broker name or IP. With TLS, use the name the certificate is issued for, and make sure the Pi resolves it to the broker |
 | `MQTT_PORT` | 1883, or 8883 with TLS | Broker port |
 | `MQTT_USER`, `MQTT_PASSWORD` | (none) | Broker credentials |
 | `MQTT_TLS` | `no` | `yes`: TLS, verifying the broker certificate |
@@ -52,8 +53,10 @@ Topics, with the default prefix:
 
 - **`off`** stops the wall, as if the monitor had lost power. The status becomes `off`, and no decoding or RTSP session runs. The display probe keeps running.
 - **`cameras`** starts the wall again once a display is present.
-- **The mode persists:** camwalld saves it in `/var/lib/camwall/mode`, so `off` survives a restart, a reboot or a broker outage. Without MQTT the last saved mode still applies; delete the file to return to `cameras`.
+- **The mode persists:** camwalld saves it in `/var/lib/camwall/mode`, so `off` survives a restart, a reboot or a broker outage. With `MQTT=no` the saved mode is ignored and the wall always runs, since nothing could switch it back on.
 - **A broker that is down never stops the wall:** camwalld logs the lost connection once and reconnects by itself (after 1 s, backing off to at most 60 s).
+
+`tools/mqtt-test.py` checks the settings step by step and stops at the first failure. The steps are the settings, the name lookup, TCP, TLS (with the certificate's subject, issuer and expiry), the MQTT login, and the retained messages on camwall's topics. `--set off` or `--set cameras` also sends a command. It uses sudo to read the configuration and prints no password. When camwalld cannot connect, its log line names the cause too, for example `cannot connect to host:8883 (TLS certificate: IP address mismatch, ...)`.
 
 From any machine with `mosquitto-clients`:
 
