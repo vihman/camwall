@@ -57,3 +57,24 @@ CAM4_URL=rtsps://192.168.1.20:8443/live
 #PROBE_FAILS=3
 # Seconds to wait after the display returns before starting the wall
 #PROBE_SETTLE=3
+
+# --- MQTT (optional) ----------------------------------------------------------
+# Control and status over any MQTT broker. Off while MQTT_HOST is unset.
+# Topics: <MQTT_TOPIC>/mode/set (send cameras or off), <MQTT_TOPIC>/mode,
+# <MQTT_TOPIC>/status and <MQTT_TOPIC>/availability (retained, plain text).
+# <NAME> templates are not expanded here.
+
+#MQTT_HOST=broker.example.com
+# 1883, or 8883 with MQTT_TLS=yes
+#MQTT_PORT=1883
+#MQTT_USER=camwall
+#MQTT_PASSWORD=
+# yes: TLS, verifying the broker certificate against the system CAs or MQTT_CA_FILE
+# (which the camwall user must be able to read)
+#MQTT_TLS=no
+#MQTT_CA_FILE=/etc/camwall/mqtt-ca.crt
+# Topic prefix; give each wall its own when there is more than one
+#MQTT_TOPIC=camwall
+#MQTT_CLIENT_ID=camwall-<hostname>
+# Home Assistant discovery prefix; none disables discovery
+#MQTT_DISCOVERY=homeassistant
