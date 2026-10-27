@@ -20,6 +20,7 @@ Design in [docs/design.md](docs/design.md#home-assistant-integration).
 - [ ] Remote button in HA, mapped to the select entity. Candidate: a Sonoff Zigbee button through Zigbee2MQTT instead of the BILRESA; details to be agreed.
 - [ ] Info mode: run a Chromium kiosk under `cage` as a daemon child, mutually exclusive with the camera wall. Authenticate with a non-admin HA user's long-lived token, or with `trusted_networks` limited to the Pi.
 - [ ] Single-camera modes `camera1`..`camera4` (2026-10-27, switched live over the wall's stdin): tested off the Pi with a stub wall and the local broker; the C part not yet built. On the Pi check the full-screen picture, switching without flicker, `off` -> `cameraN`, and a camera restart in single view.
+- [ ] Camera labels `CAM1_LABEL`..`CAM4_LABEL` (2026-10-27): MQTT and the HA select use them; tested off the Pi with the local broker. On the Pi check the HA select and Status with real labels.
 - [ ] Sharper single cameras, if the upscaled 720p looks too soft: an optional `CAMn_FULL_URL` (e.g. the High stream) used only in single mode.
 
 ## Phase 4: Repository hygiene (any time)

@@ -71,6 +71,7 @@ Everything lives in `/etc/camwall/camwall.conf` (root:root, 0600, never in the r
 | Setting | Default | Meaning |
 |---|---|---|
 | `CAM1_URL`..`CAM4_URL` | (required) | `rtsp://` or `rtsps://` URL of each tile (top-left, top-right, bottom-left, bottom-right). `<NAME>` is replaced with the config variable `NAME` |
+| `CAM1_LABEL`..`CAM4_LABEL` | `Camera 1`..`Camera 4` | Camera names shown in MQTT, Home Assistant and the status, e.g. `Gate` |
 | `STREAM_HOST`, `STREAM_PORT`, `TOKEN1`.. | (none) | Conventional variables for the URL templates, e.g. `rtsps://<STREAM_HOST>:<STREAM_PORT>/<TOKEN1>`; any name works |
 | `WALL` | `planes` | `planes` (decode to display planes) or `gstreamer` (the older wall, as a fallback) |
 | `DISPLAY_PROBE` | `ddcutil --syslog never getvcp d6` | Command that succeeds while the monitor is powered; `none` disables the check |

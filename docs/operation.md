@@ -46,13 +46,14 @@ Topics, with the default prefix:
 
 | Topic | Direction | Payload |
 |---|---|---|
-| `camwall/mode/set` | to camwall | `cameras` (the 2x2 grid), `camera1`..`camera4` (that camera full screen) or `off`; anything else is logged and ignored |
-| `camwall/mode` | from camwall, retained | the current mode |
-| `camwall/status` | from camwall, retained | the same text as the `Status:` line of `systemctl status camwall`, e.g. `planes wall running`, `no display, idle (Display not found)`, `off` |
+| `camwall/mode/set` | to camwall | a mode's label, in any letter case, or its id: `All cameras` / `cameras` (the 2x2 grid), the `CAMn_LABEL`s / `camera1`..`camera4` (that camera full screen), `Off` / `off`. Anything else is logged and ignored |
+| `camwall/mode` | from camwall, retained | the current mode's label, e.g. `All cameras`, `Gate`, `Off` |
+| `camwall/status` | from camwall, retained | the same text as the `Status:` line of `systemctl status camwall`, e.g. `planes wall running`, `planes wall running, Gate`, `no display, idle (Display not found)`, `off` |
 | `camwall/availability` | from camwall, retained | `online`, or `offline` (also sent by the broker as the Last Will if camwalld disappears) |
 
 - **`off`** stops the wall, as if the monitor had lost power. The status becomes `off`, and no decoding or RTSP session runs. The monitor then shows the Pi's text console (the login prompt); switch the monitor itself off if that matters. The display probe keeps running.
 - **`cameras`** shows the 2x2 grid; **`camera1`**..**`camera4`** show that one camera on the whole screen (its 1280x720 stream scaled up by the display controller, so a little softer than a tile). From `off`, either starts the wall again once a display is present.
+- **Labels:** `CAM1_LABEL`..`CAM4_LABEL` (default `Camera 1`..`Camera 4`) name the cameras for MQTT, Home Assistant and the status. They must be unique, ignoring case, at most 32 characters, and different from the other labels and ids. camwalld saves the mode by id, so renaming a camera keeps the saved mode; Home Assistant shows a new label after camwalld restarts.
 - **Switching between `cameras` and `cameraN`** does not restart the wall: all four cameras keep decoding, and the switch takes effect at the next display tick. Only the plane wall can do this; with `WALL=gstreamer` the single-camera modes show the grid, and camwalld logs that once.
 - **The mode persists:** camwalld saves it in `/var/lib/camwall/mode`, so `off` survives a restart, a reboot or a broker outage. With `MQTT=no` the saved mode is ignored and the wall always runs, since nothing could switch it back on.
 - **A broker that is down never stops the wall:** camwalld logs the lost connection once and reconnects by itself (after 1 s, backing off to at most 60 s).
@@ -68,7 +69,7 @@ mosquitto_pub -h <broker> -u <user> -P <password> -t camwall/mode/set -m off
 
 ### Home Assistant
 
-With the default `MQTT_DISCOVERY=homeassistant`, a device named after `MQTT_TOPIC` appears in Home Assistant's MQTT integration as soon as camwalld connects. It has a **Mode** select (`cameras`, `camera1`..`camera4`, `off`) and a **Status** sensor, and both show as unavailable while camwalld is offline. With the Mosquitto broker add-on, create a user for the Pi in the add-on's configuration (or as a Home Assistant user) and put it in `MQTT_USER` and `MQTT_PASSWORD`. Automations, for example a button press, call `select.select_option` on the Mode entity.
+With the default `MQTT_DISCOVERY=homeassistant`, a device named after `MQTT_TOPIC` appears in Home Assistant's MQTT integration as soon as camwalld connects. It has a **Mode** select, whose options are the labels (`All cameras`, the four `CAMn_LABEL`s, `Off`), and a **Status** sensor, and both show as unavailable while camwalld is offline. With the Mosquitto broker add-on, create a user for the Pi in the add-on's configuration (or as a Home Assistant user) and put it in `MQTT_USER` and `MQTT_PASSWORD`. Automations, for example a button press, call `select.select_option` on the Mode entity.
 
 ## Switching to the GStreamer wall
 
