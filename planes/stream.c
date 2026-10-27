@@ -156,10 +156,10 @@ static void *stream_thread(void *arg)
     return NULL;
 }
 
-void stream_init(Stream *s, int idx, const char *host, const char *token)
+void stream_init(Stream *s, int idx, const char *url)
 {
     snprintf(s->name, sizeof s->name, "cam%d", idx + 1);
-    snprintf(s->url, sizeof s->url, "rtsps://%s:7441/%s", host, token);
+    snprintf(s->url, sizeof s->url, "%s", url);
     pthread_mutex_init(&s->mu, NULL);
     s->down = 1;
 }

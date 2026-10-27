@@ -5,16 +5,23 @@
 
 # --- Required -----------------------------------------------------------------
 
-# Gateway name or IP that serves RTSPS on port 7441
-UNIFI_HOST=unifi.example.com
-
-# Medium-resolution (1280x720) RTSPS tokens: the last path segment, without ?enableSrtp
-#   rtsps://<gateway>:7441/<TOKEN>?enableSrtp
+# One rtsp:// or rtsps:// URL per tile, H.265 or H.264.
 # Order = tile position: 1 top-left, 2 top-right, 3 bottom-left, 4 bottom-right
-TOKEN1=replace-me
-TOKEN2=replace-me
-TOKEN3=replace-me
-TOKEN4=replace-me
+# <NAME> in a URL is replaced with the value of the variable NAME from this file,
+# so a shared host, port or password is written once. Any variable name works.
+# Treat this file as a secret: URLs often contain tokens or passwords.
+STREAM_HOST=camera.example.com
+STREAM_PORT=554
+CAM1_URL=rtsp://<STREAM_HOST>:<STREAM_PORT>/stream1
+CAM2_URL=rtsp://<STREAM_HOST>:<STREAM_PORT>/stream2
+CAM3_URL=rtsp://<STREAM_HOST>:<STREAM_PORT>/stream3
+CAM4_URL=rtsps://192.168.1.20:8443/live
+
+# Example: UniFi Protect, RTSPS on port 7441 with one token per stream (the last
+# path segment of the URL Protect shows, without ?enableSrtp)
+#STREAM_PORT=7441
+#TOKEN1=replace-me
+#CAM1_URL=rtsps://<STREAM_HOST>:<STREAM_PORT>/<TOKEN1>
 
 # --- Wall ---------------------------------------------------------------------
 

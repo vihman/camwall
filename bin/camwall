@@ -1,5 +1,5 @@
 #!/bin/bash
-# camwall - 2x2 wall of UniFi Protect RTSPS streams on a Raspberry Pi 4 (KMS/DRM, no desktop).
+# camwall - 2x2 wall of RTSP/RTSPS camera streams on a Raspberry Pi 4 (KMS/DRM, no desktop).
 #
 # The GStreamer wall, used with WALL=gstreamer. Normally started by camwalld, which
 # does the display probing itself and runs this with DISPLAY_PROBE=none; it also
@@ -17,8 +17,7 @@
 # error exits with 78 (EX_CONFIG), which the unit does not restart on.
 #
 # Configuration comes from the environment (systemd EnvironmentFile):
-#   UNIFI_HOST         gateway name or IP that serves RTSPS on port 7441
-#   TOKEN1..TOKEN4     RTSPS stream tokens (the last path segment of the Protect URL)
+#   CAM1_URL..CAM4_URL rtsp:// or rtsps:// URL of each tile, already expanded by camwalld
 #   FPS                output frame rate per tile, 1-100 (default 15)
 #   TILE_WIDTH         width of one tile in pixels, even, 64-3840 (default 960)
 #   TILE_HEIGHT        height of one tile in pixels, even, 64-3840 (default 540)
@@ -39,10 +38,9 @@ nap() { sleep "$1" & wait $!; }   # interruptible by the INT/TERM trap
 int_in() { [[ $2 =~ ^[0-9]+$ ]] && (( 10#$2 >= $3 && 10#$2 <= $4 )) ||
              config_error "$1 must be a whole number from $3 to $4 (got '$2')"; }
 
-HOST=${UNIFI_HOST:-}
-[ -n "$HOST" ] || config_error "UNIFI_HOST is not set (see /etc/camwall/camwall.conf)"
-for t in TOKEN1 TOKEN2 TOKEN3 TOKEN4; do
-  [ -n "${!t:-}" ] || config_error "$t is not set (see /etc/camwall/camwall.conf)"
+for u in CAM1_URL CAM2_URL CAM3_URL CAM4_URL; do
+  [ -n "${!u:-}" ] || config_error "$u is not set (see /etc/camwall/camwall.conf)"
+  [[ ${!u} != *"<"* ]] || config_error "$u contains a <VARIABLE>: start the wall through camwalld"
 done
 
 W=${TILE_WIDTH:-960}; H=${TILE_HEIGHT:-540}
@@ -118,13 +116,13 @@ start_wall() {
   else
     D=$(mktemp -d) || { log "cannot create temporary directory"; exit 1; }
   fi
-  pids=(); local args=() i t
+  pids=(); local args=() i u
   for i in 0 1 2 3; do
-    t=TOKEN$((i+1))
+    u=CAM$((i+1))_URL
     mkfifo "$D/c$i" || { log "cannot create FIFO for cam$((i+1))"; exit 1; }
     ffmpeg -nostdin -loglevel error -rtsp_transport tcp -hwaccel drm \
       -timeout $((STREAM_TIMEOUT * 1000000)) \
-      -i "rtsps://$HOST:7441/${!t}" -an \
+      -i "${!u}" -an \
       -vf "fps=$FPS,scale=$W:$H:flags=fast_bilinear" -pix_fmt yuv420p -f rawvideo pipe:1 \
       2> >(sed -u "s/^/cam$((i+1)): /" >&2) > "$D/c$i" &
     pids+=($!)

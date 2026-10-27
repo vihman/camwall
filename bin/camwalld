@@ -9,7 +9,10 @@ stops it while the monitor has no power. No video passes through this process.
   WALL=gstreamer  /usr/local/bin/camwall: the ffmpeg + GStreamer wall (fallback)
 
 Configuration comes from the environment (systemd EnvironmentFile):
-  UNIFI_HOST, TOKEN1..TOKEN4   required; passed to the wall in its environment
+  CAM1_URL..CAM4_URL           required: rtsp:// or rtsps:// URL of each tile's stream.
+                               <NAME> in a URL is replaced with the value of the
+                               config variable NAME (e.g. <STREAM_HOST>, <TOKEN1>).
+                               The wall gets the expanded URLs in its environment.
   WALL                         planes or gstreamer (default planes)
   DISPLAY_PROBE                command that succeeds while the monitor is powered
                                (default "ddcutil --syslog never getvcp d6"; "none" disables).
@@ -24,9 +27,14 @@ The GStreamer wall reads its own settings (FPS, TILE_*, STREAM_TIMEOUT) itself.
 A configuration error exits with 78 (EX_CONFIG), which the unit does not restart on.
 A wall that exits is restarted here with backoff; a wall that exits with 78 makes
 this daemon exit with 78 too.
+
+  camwalld --url N|-   read /etc/camwall/camwall.conf, print camera N's expanded URL
+                       (or that of a template read from stdin) and exit; used by the
+                       tools in tools/
 """
 
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -75,13 +83,33 @@ def notify(msg):
         log(f"sd_notify failed: {e}")
 
 
+def expand_url(name, template):
+    """Replace each <VAR> with the config variable VAR. Errors name the variable,
+    never the value (URLs and tokens are credentials)."""
+    def var(m):
+        value = os.environ.get(m.group(1), "")
+        if not value:
+            config_error(f"{name} uses <{m.group(1)}>, which is not set")
+        return value
+    url = re.sub(r"<([A-Za-z_][A-Za-z0-9_]*)>", var, template)
+    if not re.match(r"rtsps?://[^/\s]", url) or re.search(r"[<>\s]", url):
+        config_error(f"{name} must be an rtsp:// or rtsps:// URL without spaces")
+    return url
+
+
+def camera_urls():
+    urls = []
+    for i in range(1, 5):
+        template = os.environ.get(f"CAM{i}_URL", "")
+        if not template:
+            config_error(f"CAM{i}_URL is not set (see /etc/camwall/camwall.conf)")
+        urls.append(expand_url(f"CAM{i}_URL", template))
+    return urls
+
+
 class Config:
     def __init__(self):
-        if not os.environ.get("UNIFI_HOST"):
-            config_error("UNIFI_HOST is not set (see /etc/camwall/camwall.conf)")
-        for i in range(1, 5):
-            if not os.environ.get(f"TOKEN{i}"):
-                config_error(f"TOKEN{i} is not set (see /etc/camwall/camwall.conf)")
+        self.urls = camera_urls()
         self.wall = os.environ.get("WALL", "") or "planes"
         if self.wall not in WALLS:
             config_error(f"WALL must be one of {', '.join(WALLS)} (got '{self.wall}')")
@@ -109,6 +137,8 @@ class Wall:
     def start(self):
         env = dict(os.environ)
         env["DISPLAY_PROBE"] = "none"   # the GStreamer wall must not probe on its own
+        for i, url in enumerate(self.cfg.urls, 1):
+            env[f"CAM{i}_URL"] = url
         self.proc = subprocess.Popen([self.cfg.wall_cmd], env=env, start_new_session=True,
                                      stdin=subprocess.DEVNULL)
         self.started = time.monotonic()
@@ -146,7 +176,36 @@ class Stop(Exception):
     pass
 
 
+def load_conf(path):
+    """KEY=value lines into the environment, as systemd's EnvironmentFile= reads
+    them. The file cannot be sourced by a shell: <NAME> would be a redirection."""
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line[0] in "#;" or "=" not in line:
+                    continue
+                key, value = (s.strip() for s in line.split("=", 1))
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                    value = value[1:-1]
+                os.environ[key] = value
+    except OSError as e:
+        config_error(f"cannot read {path}: {e.strerror}")
+
+
+def print_url(arg):
+    load_conf(os.environ.get("CAMWALL_CONF", "/etc/camwall/camwall.conf"))   # override for testing
+    if arg == "-":
+        print(expand_url("the URL from stdin", sys.stdin.readline().strip()))
+    elif arg in ("1", "2", "3", "4"):
+        print(camera_urls()[int(arg) - 1])
+    else:
+        config_error("usage: camwalld --url N|-")
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--url":
+        return print_url(sys.argv[2])
     cfg = Config()
 
     def on_term(signum, frame):

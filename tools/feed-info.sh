@@ -1,13 +1,14 @@
 #!/bin/bash
 # Show what a camera actually sends: codec, resolution, frame rate, bitrate and
 # keyframe interval, measured over a few seconds of the live stream. Re-runs itself
-# with sudo to read the gateway and tokens from /etc/camwall/camwall.conf.
+# with sudo to read the camera URLs from /etc/camwall/camwall.conf.
 #
 #   tools/feed-info.sh N [SECONDS]     camera N (1-4) as configured
-#   tools/feed-info.sh - [SECONDS]     a token read from stdin, e.g. another stream
-#                                      of a camera: read -rs t; echo "$t" | tools/feed-info.sh -
+#   tools/feed-info.sh - [SECONDS]     a URL read from stdin, e.g. another stream of a
+#                                      camera; <VARIABLE>s from the config are expanded:
+#                                      read -rs u; echo "$u" | tools/feed-info.sh -
 #
-# SECONDS defaults to 10. The token is never printed, but for the measuring time
+# SECONDS defaults to 10. The URL is never printed, but for the measuring time
 # ffprobe's command line, which other local users can see, contains it.
 
 set -euo pipefail
@@ -15,7 +16,7 @@ set -euo pipefail
 feed=${1:-}; secs=${2:-10}
 case $feed in
   [1-4]|-) ;;
-  -h|--help) sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "usage: tools/feed-info.sh N|- [SECONDS] (see --help)" >&2; exit 2 ;;
 esac
 [[ $secs =~ ^[0-9]+$ ]] && [ "$secs" -ge 2 ] || { echo "SECONDS must be a whole number >= 2" >&2; exit 2; }
@@ -24,14 +25,10 @@ esac
 if [ -n "${FEED_URL:-}" ]; then        # testing hook: any URL or file
   url=$FEED_URL; label=$FEED_URL
 else
-  set -a; . /etc/camwall/camwall.conf; set +a
-  if [ "$feed" = - ]; then
-    read -r token; label="token from stdin"
-  else
-    t=TOKEN$feed; token=${!t:-}; label="camera $feed"
-  fi
-  [ -n "$token" ] || { echo "no token for $label" >&2; exit 1; }
-  url="rtsps://$UNIFI_HOST:7441/$token"
+  if [ "$feed" = - ]; then label="URL from stdin"; else label="camera $feed"; fi
+  # camwalld reads the config, expands the <VARIABLE>s and checks the URL (it
+  # prints errors itself); the config cannot be sourced by a shell
+  url=$("$(dirname "${BASH_SOURCE[0]}")/../bin/camwalld" --url "$feed") || exit 1
 fi
 
 echo "measuring $label for ${secs}s ..."

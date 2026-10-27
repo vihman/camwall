@@ -4,13 +4,23 @@
 
 Do all of this over SSH. Check the prompt names the Pi before running any command, because a dropped SSH session silently leaves you in your local shell and the commands then run on the wrong machine.
 
-## 1. Enable RTSP streams in UniFi Protect
+## 1. Find the stream URLs
 
-For each camera, open its settings in Protect, go to the RTSP section, and enable the **Medium** stream (1280x720). The UI shows a URL like `rtsps://<gateway>:7441/<TOKEN>?enableSrtp`. The token is the last path segment. Medium suits the 960x540 tiles; Low (640x360) would have to be upscaled.
+camwall needs one `rtsp://` or `rtsps://` URL per tile, from the cameras themselves or from a recorder (NVR) that re-serves them. Each stream must be H.265 or H.264; other codecs (MJPEG, AV1) are refused and leave the tile black. About 1280x720 suits the 960x540 tiles: much smaller streams are upscaled, much larger ones cost decoder time for nothing. The camera's or recorder's documentation gives the URL format; check a URL with `tools/feed-info.sh -` (see [Operation](operation.md#measuring-and-checking)) before relying on it.
 
-Treat the token as a credential: anyone on the network who has it can watch that camera. Regenerate it in Protect if it ever leaks.
+Treat the URLs as credentials: a token or password in them lets anyone on the network watch that camera.
 
-**Keep the camera on H.265: Super Encoding checked, set to Auto.** In current Protect the setting is under the camera's Recording Settings, Recording Quality, as a **Super Encoding** checkbox with Auto or AV1. Older Protect versions show it as Encoding: Standard, Enhanced or Advanced. Protect presents it as a recording setting, but it governs the RTSP streams too. Confirmed on the reference system (2026-10-27): Super Encoding unchecked sends H.264, checked with Auto sends H.265 (in the old UI, Standard sent H.264 and Enhanced H.265). The wall is built and measured around H.265. A camera on H.264 also works: the plane wall decodes it on the Pi's separate H.264 block with FFmpeg's `h264_v4l2m2m` (tested on the Pi with all four cameras: the same CPU as H.265, about 23 MB more CMA per camera). That block allocates from the GPU's own memory, not CMA: with the default `gpu_mem=76` it failed with more than one camera (`Not enough GPU mem?` in `dmesg`, black tiles), and with `gpu_mem=256` in `/boot/firmware/config.txt` (under `[all]`, then reboot) all four ran. Lower values between those were not tried. Cameras on H.265 do not need it, and the GStreamer wall decodes it in software (see [Measurements](measurements.md)), which costs more CPU. H.264 gave no sharpness gain on the reference system: Protect sent its Medium stream at about the same bitrate (0.31 against 0.39 Mbit/s for an H.265 camera, 2026-10-27). Do not pick AV1 (probably the old Advanced): the Pi 4 has no AV1 decoder, and with a camera on AV1 for about 10 s the Pi's ffprobe could not identify the stream's codec (2026-10-27). Check what a camera sends with `tools/feed-info.sh N`.
+Only UniFi Protect has been tested (below). Other sources should work if they serve such streams over RTSP with TCP, which camwall always uses.
+
+### UniFi Protect
+
+For each camera, open its settings in Protect, go to the RTSP section, and enable the **Medium** stream (1280x720). The UI shows a URL like `rtsps://<gateway>:7441/<TOKEN>?enableSrtp`. Use it without `?enableSrtp`. The token is the last path segment, so the config can share the host and port: `CAM1_URL=rtsps://<STREAM_HOST>:<STREAM_PORT>/<TOKEN1>` with `STREAM_PORT=7441`. Medium suits the 960x540 tiles; Low (640x360) would have to be upscaled. Regenerate a token in Protect if it ever leaks.
+
+**Keep the camera on H.265: Super Encoding checked, set to Auto.** In current Protect the setting is under the camera's Recording Settings, Recording Quality, as a **Super Encoding** checkbox with Auto or AV1. Older Protect versions show it as Encoding: Standard, Enhanced or Advanced. Protect presents it as a recording setting, but it governs the RTSP streams too. Confirmed on the reference system (2026-10-27): Super Encoding unchecked sends H.264, checked with Auto sends H.265 (in the old UI, Standard sent H.264 and Enhanced H.265). H.264 gave no sharpness gain: Protect sent its Medium stream at about the same bitrate (0.31 against 0.39 Mbit/s for an H.265 camera, 2026-10-27). Do not pick AV1 (probably the old Advanced): the Pi 4 has no AV1 decoder, and with a camera on AV1 for about 10 s the Pi's ffprobe could not identify the stream's codec (2026-10-27).
+
+### H.264 streams
+
+The wall is built and measured around H.265. H.264 also works: the plane wall decodes it on the Pi's separate H.264 block with FFmpeg's `h264_v4l2m2m` (tested on the Pi with all four cameras: the same CPU as H.265, about 23 MB more CMA per camera). That block allocates from the GPU's own memory, not CMA: with the default `gpu_mem=76` it failed with more than one camera (`Not enough GPU mem?` in `dmesg`, black tiles), and with `gpu_mem=256` in `/boot/firmware/config.txt` (under `[all]`, then reboot) all four ran. Lower values between those were not tried. H.265 streams do not need it. The GStreamer wall decodes H.264 in software (see [Measurements](measurements.md)), which costs more CPU.
 
 ## 2. Install packages
 
@@ -57,13 +67,12 @@ Check that it works with the monitor on and off: `ddcutil getvcp d6` should prin
 ```bash
 sudo install -d -m 0755 /etc/camwall
 sudo install -m 0600 -o root -g root config/camwall.conf.example /etc/camwall/camwall.conf
-sudoedit /etc/camwall/camwall.conf      # set UNIFI_HOST and TOKEN1..TOKEN4
+sudoedit /etc/camwall/camwall.conf      # set CAM1_URL..CAM4_URL
 sudo ls -l /etc/camwall/camwall.conf    # expect -rw------- root root
 ```
 
-The file holds the gateway, the four tokens and all optional settings (frame rate, tile size, stream timeout, display check), each commented-out with its default in the example. systemd reads it as root before it drops to the `camwall` user, so the service account never needs read access to it. The format is plain `KEY=value` lines, and comments must be on their own lines (systemd does not accept trailing comments).
+The file holds the four camera URLs and all optional settings (frame rate, tile size, stream timeout, display check), each commented-out with its default in the example. In a URL, `<NAME>` is replaced with the value of the variable `NAME` from the same file, so a shared host, port, token or password is written once; camwalld does the replacement and refuses to start (status 78) if a variable is missing. systemd reads the file as root before it drops to the `camwall` user, so the service account never needs read access to it. The format is plain `KEY=value` lines, and comments must be on their own lines (systemd does not accept trailing comments). Because of the `<NAME>` templates the file cannot be loaded with the shell's `.` or `source`; the tools ask `camwalld --url N` for an expanded URL instead.
 
-Upgrading from a version that used `/etc/camwall/tokens.env`: `install.sh` moves the file to `camwall.conf` for you. By hand, run `sudo mv /etc/camwall/tokens.env /etc/camwall/camwall.conf` before installing the new unit, otherwise the service cannot start.
 
 ## 6. Build the plane wall, install the programs and the unit, then start
 
@@ -115,8 +124,8 @@ grep -iE 'hevc|rpivid|feb00000' /proc/interrupts; sleep 5; grep -iE 'hevc|rpivid
 for opt in "-hwaccel drm" ""; do
   echo "== ffmpeg $opt"
   ffmpeg -nostdin -hide_banner -loglevel info -benchmark -rtsp_transport tcp $opt \
-    -i "rtsps://$UNIFI_HOST:7441/$TOKEN1" -an -t 10 -f null - 2>&1 | tr '\r' '\n' | grep 'bench: utime'
+    -i "$URL" -an -t 10 -f null - 2>&1 | tr '\r' '\n' | grep 'bench: utime'
 done
 ```
 
-The device number (`/dev/video19`) is the one `v4l2-ctl --list-devices` reports for `rpi-hevc-dec` on the reference Pi; it can differ on yours. For check 3, export `UNIFI_HOST` and `TOKEN1` into your shell first (the config file is root-only, so type them in; avoid leaving a token in your shell history). The `utime + stime` of the hardware run should be well below the software run.
+The device number (`/dev/video19`) is the one `v4l2-ctl --list-devices` reports for `rpi-hevc-dec` on the reference Pi; it can differ on yours. For check 3, put camera 1's stream URL in `URL` first without leaving it in your shell history, for example `read -rs URL` and paste it. The `utime + stime` of the hardware run should be well below the software run.

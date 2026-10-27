@@ -10,14 +10,14 @@ Verified on the reference Pi:
 - `ffmpeg -hwaccel drm -hwaccel_output_format drm_prime -f vout_drm -` shows one stream with a clean picture, so ffmpeg passes the SAND geometry correctly (unlike `v4l2slh265dec ! kmssink`). `-hwaccel_output_format drm_prime` is required, otherwise `vout_drm` rejects the frame.
 - The program compiles without warnings on the Pi (libdrm-dev 2.4.134, libav*-dev 7.1.5+rpt2 from the Pi archive) and ran with one and then all four cameras, with all four pictures shown and no error lines.
 
-How it works: one thread per camera (libavformat RTSPS over TCP, hardware HEVC decode, DRM_PRIME frames, newest frame wins); the main thread imports frames as DRM framebuffers and commits atomic updates on a 30 fps tick (`WALL_FPS`); a stale or down stream (no frame for 3 s) disables only its plane, so that tile shows the black CRTC background while the others keep running. Each camera reconnects by itself with a growing delay. Tokens come from the environment, never argv. A missing `UNIFI_HOST` or token exits with 78. `install.sh` builds it (`gcc` against Pi OS's libdrm and libav, which carry the Pi's V4L2 request and SAND support; upstream FFmpeg cannot do this yet).
+How it works: one thread per camera (libavformat RTSP or RTSPS over TCP, hardware HEVC or H.264 decode, DRM_PRIME frames, newest frame wins); the main thread imports frames as DRM framebuffers and commits atomic updates on a 30 fps tick (`WALL_FPS`); a stale or down stream (no frame for 3 s) disables only its plane, so that tile shows the black CRTC background while the others keep running. Each camera reconnects by itself with a growing delay. The stream URLs (`CAM1_URL`..`CAM4_URL`, with `<NAME>` templates already expanded by camwalld) come from the environment, never argv. A missing URL, or one with an unexpanded `<NAME>`, exits with 78. `install.sh` builds it (`gcc` against Pi OS's libdrm and libav, which carry the Pi's V4L2 request and SAND support; upstream FFmpeg cannot do this yet).
 
-To run it by hand for a test, outside the daemon, stop the service and start it as a transient unit:
+To run it by hand for a test, outside the service, stop the service and start camwalld as a transient unit. camwalld expands the URL templates, which the wall cannot do itself:
 
 ```bash
 sudo systemctl stop camwall
-sudo systemd-run --unit=planes-test -p User=camwall -p SupplementaryGroups="video render" \
-  -p EnvironmentFile=/etc/camwall/camwall.conf /usr/local/bin/camwall-planes
+sudo systemd-run --unit=planes-test -p User=camwall -p SupplementaryGroups="video render i2c" \
+  -p EnvironmentFile=/etc/camwall/camwall.conf /usr/local/bin/camwalld
 journalctl -u planes-test -f
 # afterwards:
 sudo systemctl stop planes-test; sudo systemctl start camwall

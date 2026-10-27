@@ -119,7 +119,7 @@ else
   fi
   if [ ! -r "$CONF" ]; then
     echo "    cannot read $CONF as $(id -un); skipping the placeholder check (run as root to include it)"
-  elif grep -qE '=(replace-me|unifi\.example\.com)$' "$CONF"; then
+  elif grep -qE '=(replace-me|camera\.example\.com)$' "$CONF"; then
     configured=0
   fi
 fi
