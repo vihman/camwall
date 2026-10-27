@@ -47,10 +47,12 @@ typedef struct {
     int errlog;                    /* limits repeated error lines */
     Tile tile[MAXCAM];
     int ntiles;
+    int solo;                      /* -1: the 2x2 grid; else the one tile shown full screen */
 } Display;
 
 /* Open the vc4 card as DRM master and pick the output and ntiles overlay planes.
- * Prints the reason and returns -1 on failure. */
+ * Starts in the grid layout (solo = -1). Prints the reason and returns -1 on failure.
+ * Change d->solo at any time; the next display_present(d, 1) applies it. */
 int display_open(Display *d, int ntiles);
 
 /* 0 if a new commit may be made, -1 while a page flip is still pending

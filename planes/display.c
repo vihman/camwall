@@ -236,8 +236,11 @@ static int commit(Display *d, int modeset)
     for (int i = 0; i < d->ntiles; i++) {
         Tile *t = &d->tile[i];
         const Buf *b = t->nxt_set ? &t->nxt : &t->cur;
-        if (!b->fb)
+        if (!b->fb || (d->solo >= 0 && i != d->solo))
             add_plane_off(req, t->plane, &t->props);
+        else if (d->solo >= 0)                            /* one camera, full screen */
+            add_plane(req, t->plane, &t->props, d->crtc, b->fb, b->frame->width, b->frame->height,
+                      0, 0, d->mode.hdisplay, d->mode.vdisplay);
         else
             add_plane(req, t->plane, &t->props, d->crtc, b->fb, b->frame->width, b->frame->height,
                       (i % 2) * d->tw, (i / 2) * d->th, d->tw, d->th);
@@ -291,6 +294,7 @@ static void wait_flip(Display *d, int timeout_ms)
 int display_open(Display *d, int ntiles)
 {
     d->ntiles = ntiles;
+    d->solo = -1;
     d->fd = open_card(d);
     if (d->fd < 0) { fprintf(stderr, "no vc4 DRM device\n"); return -1; }
     drmSetClientCap(d->fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
