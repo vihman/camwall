@@ -92,6 +92,6 @@ Under camwalld with the plane wall, as user `camwall`, 2026-10-26, Ethernet:
 | Frozen daemon (`systemctl kill -s STOP --kill-whom=main`) | Restarted by systemd about 34 s later (30 s watchdog plus 3 s restart delay) |
 | `WALL=gstreamer` | The GStreamer wall runs; removing the line switches back |
 | Several cameras restarted | Only their own tiles blank, each recovers by itself |
-| Mode `off` over MQTT (2026-10-27, `gpu_mem=256`) | No wall process, no camera connections, 98.9% CPU idle, 478 MB CMA free (about 438 MB with the wall running); the monitor shows the text console. `gpu_mem` is reserved outside CMA, so the CMA figures compare directly, but it leaves Linux 180 MB less RAM than the default 76 MB |
+| Wall stopped by camwalld (2026-10-27, `gpu_mem=256`; measured with the former `off` mode, the same state as no display) | No wall process, no camera connections, 98.9% CPU idle, 478 MB CMA free (about 438 MB with the wall running); the monitor shows the text console. `gpu_mem` is reserved outside CMA, so the CMA figures compare directly, but it leaves Linux 180 MB less RAM than the default 76 MB |
 
 The GStreamer wall, by contrast, uses the console's mode: booted without a monitor it got 1024x768 and showed a cropped wall once the monitor was plugged in.

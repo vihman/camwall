@@ -93,7 +93,7 @@ The plane wall shows every camera frame and takes its tile size from the display
 | Measure CPU, memory and stream backlog | `tools/measure.sh` |
 | Check hardware decoding | `tools/check-hwdec.sh` |
 | Codec, resolution, bitrate of camera N | `tools/feed-info.sh N` |
-| Switch the view remotely | publish `cameras`, `camera1`..`camera4` or `off` to `camwall/mode/set` over MQTT |
+| Switch the view remotely | publish `cameras`, `camera1`..`camera4` or a camera label to `camwall/mode/set` over MQTT |
 | Check the MQTT settings and connection | `tools/mqtt-test.py` |
 
 A dead camera only blanks its own tile; the wall reconnects it by itself. If the wall process exits, the daemon restarts it with backoff; if the daemon hangs, the systemd watchdog restarts the service. A configuration error exits with status 78 and is not retried. See [docs/operation.md](docs/operation.md) for failure handling, startup checks, display presence and frame rate, and [docs/troubleshooting.md](docs/troubleshooting.md) when something looks wrong.

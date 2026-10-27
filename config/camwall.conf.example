@@ -66,8 +66,8 @@ CAM4_URL=rtsps://192.168.1.20:8443/live
 # --- MQTT (optional) ----------------------------------------------------------
 # Control and status over any MQTT broker. Off unless MQTT=yes; the other MQTT_*
 # settings are then read. Check them with tools/mqtt-test.py.
-# Topics: <MQTT_TOPIC>/mode/set (send cameras, camera1..camera4 or off), <MQTT_TOPIC>/mode,
-# <MQTT_TOPIC>/status and <MQTT_TOPIC>/availability (retained, plain text).
+# Topics: <MQTT_TOPIC>/mode/set (send cameras, camera1..camera4 or a label),
+# <MQTT_TOPIC>/mode, /status, /display and /availability (retained, plain text).
 # <NAME> templates are not expanded here.
 
 #MQTT=no
