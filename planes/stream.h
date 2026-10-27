@@ -1,6 +1,6 @@
 /*
- * Camera side: one thread per camera, libavformat RTSPS -> V4L2 stateless HEVC
- * hardware decoder -> DRM_PRIME frames. Knows nothing about the display; the
+ * Camera side: one thread per camera, libavformat RTSP(S) -> hardware decoder
+ * (HEVC or H.264) -> DRM_PRIME frames. Knows nothing about the display; the
  * main loop takes the newest frame with stream_take().
  */
 #ifndef CAMWALL_STREAM_H
@@ -13,7 +13,7 @@
 
 typedef struct {
     char name[16];                 /* "cam1".."cam4", for log lines */
-    char url[600];                 /* contains the token: never print */
+    char url[600];                 /* may contain a token or password: never print */
     const char *drm_path;          /* DRM device for the hardware decoder */
     pthread_t th;
     pthread_mutex_t mu;
@@ -23,7 +23,7 @@ typedef struct {
     int64_t deadline;              /* I/O deadline for the interrupt callback */
 } Stream;
 
-void stream_init(Stream *s, int idx, const char *host, const char *token);
+void stream_init(Stream *s, int idx, const char *url);
 void stream_start(Stream *s, const char *drm_path);
 void stream_join(Stream *s);
 

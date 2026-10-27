@@ -1,12 +1,13 @@
 /*
- * camwall-planes: 2x2 UniFi Protect wall for Raspberry Pi 4, decode-to-plane.
+ * camwall-planes: 2x2 RTSP camera wall for Raspberry Pi 4, decode-to-plane.
  *
- * Per camera: one thread, libavformat RTSPS -> V4L2 stateless HEVC hardware
- * decoder -> DRM_PRIME frames (stream.c). The main thread imports each frame as a
- * DRM framebuffer and puts it on its own overlay plane (display.c); the HVS
- * scales and composes at scanout. No pixel data is touched by the CPU.
+ * Per camera: one thread, libavformat RTSP(S) -> hardware decoder (HEVC: V4L2
+ * stateless; H.264: v4l2m2m) -> DRM_PRIME frames (stream.c). The main thread
+ * imports each frame as a DRM framebuffer and puts it on its own overlay plane
+ * (display.c); the HVS scales and composes at scanout. No pixel data is touched
+ * by the CPU.
  *
- * Environment: UNIFI_HOST, TOKEN1..TOKEN4 (as in /etc/camwall/camwall.conf)
+ * Environment: CAM1_URL..CAM4_URL, already expanded by camwalld
  * Optional:    CAMS (1..4, default 4), WALL_FPS (display tick, default 30)
  * Missing configuration exits with 78 (EX_CONFIG); camwalld does not restart on it.
  * Normally started by camwalld (bin/camwalld), built and installed by install.sh.
@@ -17,6 +18,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #include <libavutil/log.h>
@@ -53,19 +55,22 @@ static Display g_disp;
 
 int main(void)
 {
-    const char *host = getenv("UNIFI_HOST");
     const char *e;
     int ncam = MAXCAM, fps = 30;
 
     if ((e = getenv("CAMS")) && atoi(e) >= 1 && atoi(e) <= MAXCAM) ncam = atoi(e);
     if ((e = getenv("WALL_FPS")) && atoi(e) >= 1 && atoi(e) <= 60) fps = atoi(e);
-    if (!host || !*host) { fprintf(stderr, "UNIFI_HOST not set\n"); return 78; }
     for (int i = 0; i < ncam; i++) {
         char var[16];
-        snprintf(var, sizeof var, "TOKEN%d", i + 1);
-        const char *tok = getenv(var);
-        if (!tok || !*tok) { fprintf(stderr, "%s not set\n", var); return 78; }
-        stream_init(&g_stream[i], i, host, tok);
+        snprintf(var, sizeof var, "CAM%d_URL", i + 1);
+        const char *url = getenv(var);
+        if (!url || !*url) { fprintf(stderr, "%s not set\n", var); return 78; }
+        if (strchr(url, '<')) {
+            fprintf(stderr, "%s contains a <VARIABLE>: start the wall through camwalld\n", var);
+            return 78;
+        }
+        if (strlen(url) >= sizeof g_stream[i].url) { fprintf(stderr, "%s too long\n", var); return 78; }
+        stream_init(&g_stream[i], i, url);
     }
 
     struct sigaction sa = { .sa_handler = on_signal };
