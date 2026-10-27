@@ -139,3 +139,7 @@ The state of hardware HEVC support in GStreamer, FFmpeg and the kernel is summar
 ## Security
 
 The camera tokens are credentials. They live only in `/etc/camwall/camwall.conf`; the service runs as an unprivileged, sandboxed account; the RTSPS certificate is not verified, so use camwall only on an internal network. Details in [docs/security.md](docs/security.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE).

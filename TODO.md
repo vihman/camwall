@@ -51,7 +51,7 @@ Design in [docs/design.md](docs/design.md#planned-home-assistant-integration).
   - a compile of the C helper against Debian libdrm/libav headers
   - a markdown lint
 - [ ] Bash version guard in `bin/camwall`: `wait -n -p` needs bash 5.1+, so fail early with a clear message.
-- [ ] Add a LICENSE.
+- [x] Add a LICENSE (MIT, 2026-10-27).
 
 ## Before production
 
