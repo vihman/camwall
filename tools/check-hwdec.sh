@@ -7,7 +7,7 @@
 #
 #   --ab   also decode 10 s of camera 1 with and without the hardware decoder and
 #          compare the CPU time (for 10 s each, ffmpeg's command line, which other
-#          local users can see, contains camera 1's token)
+#          local users can see, contains camera 1's URL)
 
 set -euo pipefail
 
@@ -56,11 +56,11 @@ fi
 
 # 5. optional A/B: CPU seconds for 10 s of camera 1 with and without the decoder
 if [ "$AB" = 1 ]; then
-  set -a; . /etc/camwall/camwall.conf; set +a
+  url=$("$(dirname "${BASH_SOURCE[0]}")/../bin/camwalld" --url 1) || exit 1
   for opt in "-hwaccel drm" ""; do
     # shellcheck disable=SC2086  # $opt is two words or none
     t=$(ffmpeg -nostdin -hide_banner -loglevel info -benchmark -rtsp_transport tcp $opt \
-          -i "rtsps://$UNIFI_HOST:7441/$TOKEN1" -an -t 10 -f null - 2>&1 |
+          -i "$url" -an -t 10 -f null - 2>&1 |
         tr '\r' '\n' | grep -oE 'utime=[0-9.]+s stime=[0-9.]+s' | tail -1 || true)
     echo "a/b:       ${opt:-software}: $t"
   done

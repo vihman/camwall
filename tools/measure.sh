@@ -1,7 +1,8 @@
 #!/bin/bash
 # One measurement of the running wall: CPU, load, clock and temperature, memory,
-# the busiest threads and whether every camera stream keeps up. Prints no tokens
-# and needs no root. Run it on the Pi while camwall.service is running.
+# the busiest threads and whether every camera stream keeps up. Prints no tokens.
+# Run it on the Pi while camwall.service is running. The stream check uses sudo to
+# find the wall's sockets (ss shows other users' processes only to root).
 #
 #   tools/measure.sh [--settle SECONDS] [--samples N]
 #
@@ -54,12 +55,14 @@ top -b -n 2 -d 3 -H -w 200 | awk '/^top -/ {n++} n == 2' | sed -n '7,15p'
 # grows between runs means the wall does not keep up (see docs/operation.md).
 echo
 echo "camera streams (10 s):"
-snap() { ss -tni '( dport = :7441 )' | awk '
-  /^ESTAB/ {q=$2; p=$4; next}
-  /bytes_received:/ {match($0, /bytes_received:[0-9]+/); print p, q, substr($0, RSTART+15, RLENGTH-15)}'; }
+# the wall's TCP connections, any port: camwall-planes, or ffmpeg under the fallback
+snap() { sudo ss -tnpi state established | awk '
+  /^[0-9]/ {p = ""}
+  /^[0-9]/ && /"(camwall-planes|ffmpeg)"/ {q = $1; p = $3; next}
+  p != "" && /bytes_received:/ {match($0, /bytes_received:[0-9]+/); print p, q, substr($0, RSTART+15, RLENGTH-15); p = ""}'; }
 a=$(snap); sleep 10; b=$(snap)
 if [ -z "$a" ]; then
-  echo "  no RTSPS sessions (wall idle?)"
+  echo "  no camera connections (wall idle?)"
 else
   join <(echo "$a" | sort) <(echo "$b" | sort) | awk '{rate=($5-$3)/10;
     printf "  %-22s %6.0f kB/s %5.2f Mbit/s  Recv-Q %8d B  ~%.2f s queued\n",
