@@ -4,6 +4,16 @@
 tokens.env
 camwall.conf
 
+# Local working notes (environment details, not for the public repo)
+CLAUDE.md
+HANDOFF.md
+
+# Build output and test leftovers
+planes/camwall-planes
+planes/*.o
+planes/soak.sh
+*.log
+
 # Backups and editor leftovers
 *.bak
 *~

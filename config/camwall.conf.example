@@ -16,7 +16,14 @@ TOKEN2=replace-me
 TOKEN3=replace-me
 TOKEN4=replace-me
 
-# --- Picture ------------------------------------------------------------------
+# --- Wall ---------------------------------------------------------------------
+
+# planes: hardware decode straight onto the display planes, every camera frame,
+#         tiles sized from the display mode (default)
+# gstreamer: the older ffmpeg + GStreamer wall, kept as a fallback
+#WALL=planes
+
+# --- GStreamer wall only (WALL=gstreamer) -------------------------------------
 
 # Output frame rate per tile, a whole number from 1 to 100
 #FPS=15
@@ -27,16 +34,14 @@ TOKEN4=replace-me
 #TILE_WIDTH=960
 #TILE_HEIGHT=540
 
-# --- Stalled cameras ----------------------------------------------------------
-
 # Seconds without data before ffmpeg gives up on a stalled camera and the wall
 # restarts, a whole number from 1 to 300
 #STREAM_TIMEOUT=10
 
 # --- Display presence check ---------------------------------------------------
-# The wall runs only while this command succeeds (a monitor without power makes it
-# fail) and idles with no decoding otherwise. "none" disables the check. Needs the
-# i2c-dev module and the camwall user in group i2c.
+# camwalld runs the wall only while this command succeeds (a monitor without power
+# makes it fail) and idles with no decoding otherwise. "none" disables the check.
+# Needs the i2c-dev module and the camwall user in group i2c.
 
 #DISPLAY_PROBE=ddcutil --syslog never getvcp d6
 # Seconds between checks while the wall runs

@@ -1,10 +1,15 @@
 [Unit]
 Description=Camera wall (2x2 UniFi Protect on KMS)
+Documentation=https://github.com/vihman/camwall
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
+# camwalld supervises the wall (WALL=planes or gstreamer in camwall.conf).
+Type=notify
+NotifyAccess=main
+WatchdogSec=30
 User=camwall
 SupplementaryGroups=video render i2c
 StateDirectory=camwall
@@ -12,7 +17,7 @@ RuntimeDirectory=camwall
 RuntimeDirectoryMode=0700
 Environment=HOME=/var/lib/camwall
 EnvironmentFile=/etc/camwall/camwall.conf
-ExecStart=/usr/local/bin/camwall
+ExecStart=/usr/local/bin/camwalld
 Restart=always
 RestartSec=3
 RestartSteps=4
