@@ -17,6 +17,11 @@ CAM2_URL=rtsp://<STREAM_HOST>:<STREAM_PORT>/stream2
 CAM3_URL=rtsp://<STREAM_HOST>:<STREAM_PORT>/stream3
 CAM4_URL=rtsps://192.168.1.20:8443/live
 
+# Optional names for MQTT, Home Assistant and the status (default Camera 1..4);
+# unique, at most 32 characters
+#CAM1_LABEL=Gate
+#CAM2_LABEL=Back yard
+
 # Example: UniFi Protect, RTSPS on port 7441 with one token per stream (the last
 # path segment of the URL Protect shows, without ?enableSrtp)
 #STREAM_PORT=7441
@@ -57,3 +62,26 @@ CAM4_URL=rtsps://192.168.1.20:8443/live
 #PROBE_FAILS=3
 # Seconds to wait after the display returns before starting the wall
 #PROBE_SETTLE=3
+
+# --- MQTT (optional) ----------------------------------------------------------
+# Control and status over any MQTT broker. Off unless MQTT=yes; the other MQTT_*
+# settings are then read. Check them with tools/mqtt-test.py.
+# Topics: <MQTT_TOPIC>/mode/set (send cameras, camera1..camera4 or a label),
+# <MQTT_TOPIC>/mode, /status, /display and /availability (retained, plain text).
+# <NAME> templates are not expanded here.
+
+#MQTT=no
+#MQTT_HOST=broker.example.com
+# 1883, or 8883 with MQTT_TLS=yes
+#MQTT_PORT=1883
+#MQTT_USER=camwall
+#MQTT_PASSWORD=
+# yes: TLS, verifying the broker certificate against the system CAs or MQTT_CA_FILE
+# (which the camwall user must be able to read)
+#MQTT_TLS=no
+#MQTT_CA_FILE=/etc/camwall/mqtt-ca.crt
+# Topic prefix; give each wall its own when there is more than one
+#MQTT_TOPIC=camwall
+#MQTT_CLIENT_ID=camwall-<hostname>
+# Home Assistant discovery prefix; none disables discovery
+#MQTT_DISCOVERY=homeassistant

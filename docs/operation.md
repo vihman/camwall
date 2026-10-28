@@ -26,6 +26,52 @@ Why DDC/CI and not the HDMI connector status, and what the probe costs: see [Des
 - **The daemon exits:** systemd restarts the service after 3 s, backing off to at most 60 s.
 - **A configuration error** (missing `CAMn_URL`, a `<NAME>` in a URL whose variable is not set, a URL that is not `rtsp://` or `rtsps://`, invalid `WALL` or `PROBE_*` value, or a wall program that is not installed): the daemon or the wall exits with status 78, and systemd does not restart it. The journal says what to fix; after fixing it, run `sudo systemctl restart camwall`.
 
+## MQTT
+
+Optional, off by default. With `MQTT=yes`, camwalld connects to the broker in `MQTT_HOST` and can be switched on and off over MQTT. Any MQTT 3.1.1 broker and any controller works (Home Assistant, Node-RED, openHAB, or `mosquitto_pub` by hand). The payloads are plain text. It needs `python3-paho-mqtt`, which `install.sh` installs.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `MQTT` | `no` | `yes` turns MQTT on; with `no` the other settings are ignored |
+| `MQTT_HOST` | (required with `MQTT=yes`) | Broker name or IP. With TLS, use the name the certificate is issued for, and make sure the Pi resolves it to the broker |
+| `MQTT_PORT` | 1883, or 8883 with TLS | Broker port |
+| `MQTT_USER`, `MQTT_PASSWORD` | (none) | Broker credentials |
+| `MQTT_TLS` | `no` | `yes`: TLS, verifying the broker certificate |
+| `MQTT_CA_FILE` | (system CAs) | CA certificate for a broker with its own CA; the `camwall` user must be able to read it |
+| `MQTT_TOPIC` | `camwall` | Topic prefix; give each wall its own when there is more than one |
+| `MQTT_CLIENT_ID` | `camwall-<hostname>` | MQTT client id |
+| `MQTT_DISCOVERY` | `homeassistant` | Home Assistant discovery prefix; `none` turns discovery off |
+
+Topics, with the default prefix:
+
+| Topic | Direction | Payload |
+|---|---|---|
+| `camwall/mode/set` | to camwall | a mode's label, in any letter case, or its id: `All cameras` / `cameras` (the 2x2 grid), the `CAMn_LABEL`s / `camera1`..`camera4` (that camera full screen). Anything else is logged and ignored |
+| `camwall/mode` | from camwall, retained | the current mode's label, e.g. `All cameras`, `Gate` |
+| `camwall/status` | from camwall, retained | the same text as the `Status:` line of `systemctl status camwall`, e.g. `planes wall running`, `planes wall running, Gate`, `no display, idle (Display not found)` |
+| `camwall/display` | from camwall, retained | `on` while a monitor is detected, `off` without one (the display probe) |
+| `camwall/availability` | from camwall, retained | `online`, or `offline` (also sent by the broker as the Last Will if camwalld disappears) |
+
+- **`cameras`** shows the 2x2 grid; **`camera1`**..**`camera4`** show that one camera on the whole screen (its 1280x720 stream scaled up by the display controller, so a little softer than a tile).
+- **There is no off mode:** the wall stops by itself while no monitor is detected ([Display presence](#display-presence)) and `display` turns `off`. The chosen view is kept, and a view chosen meanwhile is remembered; the wall comes back in it with the monitor. To stop the wall by hand, use `sudo systemctl stop camwall`.
+- **Labels:** `CAM1_LABEL`..`CAM4_LABEL` (default `Camera 1`..`Camera 4`) name the cameras for MQTT, Home Assistant and the status. They must be unique, ignoring case, at most 32 characters, and different from the other labels and ids. camwalld saves the mode by id, so renaming a camera keeps the saved mode; Home Assistant shows a new label after camwalld restarts.
+- **Switching between `cameras` and `cameraN`** does not restart the wall: all four cameras keep decoding, and the switch takes effect at the next display tick. Only the plane wall can do this; with `WALL=gstreamer` the single-camera modes show the grid, and camwalld logs that once.
+- **The mode persists:** camwalld saves it in `/var/lib/camwall/mode`, so `off` survives a restart, a reboot or a broker outage. With `MQTT=no` the saved mode is ignored and the wall always runs, since nothing could switch it back on.
+- **A broker that is down never stops the wall:** camwalld logs the lost connection once and reconnects by itself (after 1 s, backing off to at most 60 s).
+
+`tools/mqtt-test.py` checks the settings step by step and stops at the first failure. The steps are the settings, the name lookup, TCP, TLS (with the certificate's subject, issuer and expiry), the MQTT login, and the retained messages on camwall's topics. `--set MODE` (for example `--set camera2`) also sends a command. It uses sudo to read the configuration and prints no password. When camwalld cannot connect, its log line names the cause too, for example `cannot connect to host:8883 (TLS certificate: IP address mismatch, ...)`.
+
+From any machine with `mosquitto-clients`:
+
+```bash
+mosquitto_sub -h <broker> -u <user> -P <password> -v -t 'camwall/#'
+mosquitto_pub -h <broker> -u <user> -P <password> -t camwall/mode/set -m cameras
+```
+
+### Home Assistant
+
+With the default `MQTT_DISCOVERY=homeassistant`, a device named after `MQTT_TOPIC` appears in Home Assistant's MQTT integration as soon as camwalld connects. It has a **Mode** select, whose options are the labels (`All cameras` and the four `CAMn_LABEL`s), a **Status** sensor and a **Display** binary sensor, and all show as unavailable while camwalld is offline. With the Mosquitto broker add-on, create a user for the Pi in the add-on's configuration (or as a Home Assistant user) and put it in `MQTT_USER` and `MQTT_PASSWORD`. Automations, for example a button press, call `select.select_option` on the Mode entity.
+
 ## Switching to the GStreamer wall
 
 Set `WALL=gstreamer` in `/etc/camwall/camwall.conf` and restart the service:

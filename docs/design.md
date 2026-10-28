@@ -1,5 +1,37 @@
 # Design notes and findings
 
+## Overview
+
+```text
+camera 1..4 (RTSP or RTSPS from the cameras or a recorder)
+   |
+   |  camwall-planes, one thread per camera: RTSP(S) -> hardware decode
+   |  (H.265: rpi-hevc-dec; H.264: the H.264 block) -> DRM_PRIME frame, newest frame wins
+   v
+overlay planes on the HDMI output: the display controller scales and composes
+the 2x2 grid (or one camera full screen) at scanout (atomic KMS)
+   |
+   v
+HDMI monitor
+
+camwalld (systemd, Type=notify, watchdog): starts/stops camwall-planes on the DDC/CI
+display probe, switches the layout, optional MQTT
+```
+
+Repository layout:
+
+```text
+bin/camwalld                   the daemon run by the unit (installed to /usr/local/bin/camwalld)
+planes/                        the plane wall in C, built by install.sh (/usr/local/bin/camwall-planes):
+                                 stream.c (RTSP(S) + decode), display.c (KMS planes), main.c, Makefile
+bin/camwall                    the GStreamer wall, the fallback (/usr/local/bin/camwall)
+systemd/camwall.service        the service unit
+config/camwall.conf.example    template for /etc/camwall/camwall.conf (secrets live only there)
+install.sh                     installs or updates everything, safe to re-run
+tools/                         measure.sh, check-hwdec.sh, feed-info.sh, mqtt-test.py
+docs/                          the documentation
+```
+
 ## The plane wall
 
 `planes/` (`stream.c`: RTSPS and hardware decode; `display.c`: KMS planes and atomic commits; `main.c`: configuration and the loop that moves frames from streams to tiles), installed as `/usr/local/bin/camwall-planes` and run by camwalld (`WALL=planes`, the default). Goal: no CPU in the pixel path. Each camera is decoded by the hardware into DRM_PRIME frames and put on its own display overlay plane; the display controller (HVS) scales and composes at scanout.
@@ -9,6 +41,8 @@ Verified on the reference Pi:
 - `modetest -M vc4 -p`: HDMI-A-1 uses CRTC 102 (primary plane 91, cursor plane 688). 16 overlay planes (ids 127..292) are available to it. Every plane lists NV12 with BROADCOM_SAND128/64/256 and linear. The CRTC has a writable `BACKGROUND_COLOR` (opaque black).
 - `ffmpeg -hwaccel drm -hwaccel_output_format drm_prime -f vout_drm -` shows one stream with a clean picture, so ffmpeg passes the SAND geometry correctly (unlike `v4l2slh265dec ! kmssink`). `-hwaccel_output_format drm_prime` is required, otherwise `vout_drm` rejects the frame.
 - The program compiles without warnings on the Pi (libdrm-dev 2.4.134, libav*-dev 7.1.5+rpt2 from the Pi archive) and ran with one and then all four cameras, with all four pictures shown and no error lines.
+
+Layouts: the 2x2 grid, or one camera's plane on the whole screen with the other planes off. camwalld starts the wall with `WALL_LAYOUT` (0 = grid, N = camera N) and switches it live by writing `layout N` lines to the wall's stdin, which the display loop reads (non-blocking) every tick; all cameras keep decoding, so a switch costs nothing but a commit. EOF on stdin is ignored.
 
 How it works: one thread per camera (libavformat RTSP or RTSPS over TCP, hardware HEVC or H.264 decode, DRM_PRIME frames, newest frame wins); the main thread imports frames as DRM framebuffers and commits atomic updates on a 30 fps tick (`WALL_FPS`); a stale or down stream (no frame for 3 s) disables only its plane, so that tile shows the black CRTC background while the others keep running. Each camera reconnects by itself with a growing delay. The stream URLs (`CAM1_URL`..`CAM4_URL`, with `<NAME>` templates already expanded by camwalld) come from the environment, never argv. A missing URL, or one with an unexpanded `<NAME>`, exits with 78. `install.sh` builds it (`gcc` against Pi OS's libdrm and libav, which carry the Pi's V4L2 request and SAND support; upstream FFmpeg cannot do this yet).
 
@@ -45,17 +79,19 @@ Review findings and weak spots:
 
 ## The daemon (camwalld)
 
-`bin/camwalld`, Python 3 with the standard library only, run by `camwall.service` (`Type=notify`, `WatchdogSec=30`). It is the control plane: it validates the configuration, probes the display, and starts and stops the wall as a child process. No frame passes through it, and a crash of the native wall is just a child's exit status.
+`bin/camwalld`, Python 3 with the standard library (plus Debian's `python3-paho-mqtt` when MQTT is configured), run by `camwall.service` (`Type=notify`, `WatchdogSec=30`). It is the control plane: it validates the configuration, probes the display, takes the mode from MQTT, and starts and stops the wall as a child process. No frame passes through it, and a crash of the native wall is just a child's exit status.
 
 - The wall runs in its own process group, so stopping it also stops anything it started (the GStreamer wall's ffmpeg processes): SIGTERM to the group, SIGKILL after 10 s.
-- `WALL=planes` runs `camwall-planes`; `WALL=gstreamer` runs the older `camwall` script with `DISPLAY_PROBE=none`, since the daemon does the probing. Both inherit the environment, including the tokens.
+- `WALL=planes` runs `camwall-planes`; `WALL=gstreamer` runs the older `camwall` script with `DISPLAY_PROBE=none`, since the daemon does the probing. Both inherit the environment with the expanded `CAMn_URL`s and without the `MQTT_*` settings, so the broker password stays in the daemon.
 - A wall that exits is restarted with backoff (2, 4, 8, 16, 30 s, reset after a minute of running). Exit status 78 from a wall means a configuration error and stops the daemon with 78, which the unit does not restart.
 - Notifications to systemd go straight to `$NOTIFY_SOCKET` (no `python3-systemd` dependency): `READY=1` after the configuration is validated, `WATCHDOG=1` every second, and `STATUS=` with the current state.
+- The wall runs while a display is present, in the layout of the current mode (the grid or one camera). The mode is set over MQTT and saved in `$STATE_DIRECTORY/mode` (`/var/lib/camwall/mode`), so it survives restarts and broker outages. With MQTT off the saved mode is ignored.
+- MQTT: paho runs the connection, including reconnects (1 s backing off to 60 s) and the Last Will, in its own thread. Commands reach the 1 s main loop through a queue, so the loop stays single-threaded. A broker that is down is logged once and never stops the wall. MQTT is off unless `MQTT=yes`, and only then is paho imported. paho does not say why a connection failed, so camwalld repeats the TCP and TLS steps once per outage and logs the first failing one; `tools/mqtt-test.py` shares that code and the settings parsing. Tested against a local broker (amqtt) with a stub wall, including broker loss and return; not yet on the Pi.
 - `CAMWALL_BIN_DIR` (default `/usr/local/bin`) points the daemon at other wall programs, for testing with stubs.
 
 ### Why Python plus a C helper
 
-Python with ctypes and hand-written FFmpeg struct offsets was judged too fragile. A Python+cffi rewrite (API mode, compiled against the real headers, with a small C glue block for the interrupt callback, `get_format`, the ioctls and the DRM event handler) was considered. The chosen split is to keep the C program as a thin pixel path, run as a child process, under a Python control daemon (stdlib only, no pip). Frames never pass through Python, and a native crash is just a child's exit code.
+Python with ctypes and hand-written FFmpeg struct offsets was judged too fragile. A Python+cffi rewrite (API mode, compiled against the real headers, with a small C glue block for the interrupt callback, `get_format`, the ioctls and the DRM event handler) was considered. The chosen split is to keep the C program as a thin pixel path, run as a child process, under a Python control daemon (stdlib, plus Debian's paho-mqtt for MQTT; no pip). Frames never pass through Python, and a native crash is just a child's exit code.
 
 ## The GStreamer wall (fallback): why ffmpeg and FIFOs
 
@@ -71,6 +107,8 @@ Stock Pi OS ffmpeg decodes the same streams correctly with `-hwaccel drm` and ha
 | mpv from Debian Trixie (0.40) | No `v4l2request` hwdec, falls back to software. |
 | Kodi | Hardware decode works, but it shows one video at a time. |
 | ffmpeg `-tls_verify 0` | This ffmpeg build rejects the option for RTSP input. The connection works without it, which means the self-signed gateway certificate is not verified. Intentionally left unverified, since camwall is meant for an internal, protected network. |
+| `rtspsrc ! rtph264depay ! h264parse ! v4l2h264dec` (GStreamer 1.26.2), H.264 from UniFi Protect (2026-10-28) | Fails before the decoder: `rtph264depay` reports `Could not decode stream` and then `The stream is in the wrong format`, also with `avdec_h264` or no decoder at all; one run crashed (SIGSEGV) after `h264parse` reported a broken bit stream. ffmpeg reads the same streams without trouble. A 4K H.264 stream is also refused (`not-negotiated`): the Pi 4's H.264 block stops at about 1080p. So `v4l2h264dec` itself was never fed a valid frame. |
+| ffmpeg `-c:v h264_v4l2m2m` in the GStreamer wall (2026-10-28) | Decodes on the H.264 block, but the software scaler reading its output cost 18.3 s of CPU per 10 s against 3.5 s for software decoding, and saturated the wall. H.264 stays in software there; see [Measurements](measurements.md#mixed-h264-and-h265). |
 | `-fflags nobuffer -flags low_delay -map 0:v:0` on ffmpeg | Removed after the tile widths looked wrong, but that turned out to be the 1024x768 fallback mode from booting with the monitor off. Never actually tested on the Pi; retry one at a time if latency matters. |
 
 ## Display presence detection
@@ -99,16 +137,15 @@ Researched 2026-10; recheck before relying on any of it.
 - **UniFi RTSPS:** [go2rtc#2071](https://github.com/AlexxIT/go2rtc/issues/2071) reports port 7441 RTSPS failures where `rtsp://<gateway>:7447/<token>?enablertsp` works. Not official; not seen here, but a known fallback.
 - **uiprotect** (Python, packaged as `python3-uiprotect` in Debian) can create and fetch RTSPS stream URLs through the Protect API ([docs](https://uiprotect.readthedocs.io/en/latest/api/)), which could automate token rotation.
 
-## Planned: Home Assistant integration
+## Home Assistant integration
 
-Not built; see [TODO](../TODO.md) phase 3.
+MQTT control is built (see [Operation](operation.md#mqtt)); the rest is planned, see [TODO](../TODO.md) phase 3.
 
-- The remote button is an IKEA BILRESA scroll wheel, a Matter-over-Thread device paired with Home Assistant. It appears in HA as 9 Matter event entities, **disabled by default**: 3 channels, each with clockwise, anticlockwise and press. Channel switching happens on the device. A short press is reported only after the ~1 s double-press timeout, and the wheel is reported flaky, so use fixed button presses to set a mode, not the wheel. Some devices reportedly "fall asleep" until the batteries are reseated. Automations must trigger on event-entity state changes; no device triggers appear ([community thread](https://community.home-assistant.io/t/matter-ikea-bilresa-scrollwheel-media-control/1013472)).
-- Control path: MQTT, through the broker Home Assistant already uses. The daemon publishes an HA MQTT-discovery `select` entity (`cameras`, `info`, `off`, later single-camera) plus availability and health. HA automations set fixed select targets from the BILRESA events rather than a blind toggle. The Pi gets its own Mosquitto user, credentials in `/etc/camwall/` (0600). Python client: `python3-paho-mqtt` from apt.
+- Control path: MQTT, kept generic so that any broker and controller works. Plain-text topics under `MQTT_TOPIC` (`mode/set`, `mode`, `status`, `availability`) are the interface. Home Assistant discovery is one consumer of them, on by default (`MQTT_DISCOVERY=homeassistant`), and publishes a `select` (Mode), a `sensor` (Status) and a `binary_sensor` (Display) under one device. Modes so far: `cameras`, `camera1`..`camera4`; info mode would become one more value. There is no off mode: whether the wall shows anything follows the display probe, published as `display`, so the select never has to show a state nobody chose. Inside camwalld (and in the saved mode file) a mode is its id; MQTT carries its label (`All cameras`, `CAMn_LABEL`), so the Home Assistant select needs no templates, and `mode/set` accepts either. Per-camera health (`<topic>/camera/<n>`) needs the daemon to read the wall's `camN:` lines first.
+- Remote button: to be decided. A Sonoff Zigbee button through Zigbee2MQTT is the candidate: it reports a press at once, unlike the IKEA BILRESA scroll wheel tried on paper first (Matter event entities disabled by default, a short press reported only after the ~1 s double-press timeout, a wheel reported flaky; [community thread](https://community.home-assistant.io/t/matter-ikea-bilresa-scrollwheel-media-control/1013472)). The press mapping is to be agreed.
 - Info mode: a Chromium kiosk under `cage` (Wayland, DRM direct) showing an HA dashboard, started and stopped by the daemon and mutually exclusive with the cameras (both need DRM master). Auth via a long-lived token for a dedicated non-admin HA user, or `trusted_networks` limited to the Pi's IP. Unverified: injecting the token into the browser storage via the DevTools protocol.
-- Daemon: the existing camwalld (see [The daemon](#the-daemon-camwalld)) gains the MQTT client and a third kind of child, the browser, next to the two walls.
+- Daemon: camwalld (see [The daemon](#the-daemon-camwalld)) gains a third kind of child, the browser, next to the two walls.
 
 ## Ideas not built
 
-- Hardware H.264 in the GStreamer wall for cameras with Super Encoding unchecked: ffmpeg's `h264_v4l2m2m` (picking the decoder per camera via `ffprobe`), or `v4l2h264dec`. Not tried; the plane wall already uses `h264_v4l2m2m`.
 - With the GStreamer wall: raising the FIFO pipe size (`F_SETPIPE_SZ`, capped by `/proc/sys/fs/pipe-max-size`) or using Unix sockets to cut the `filesrc` overhead; black fallback tiles via `videotestsrc` and the compositor's `ignore-inactive-pads`. Only worth doing if the plane wall is abandoned.

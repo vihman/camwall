@@ -1,6 +1,6 @@
 # Measurements
 
-Lab notebook of the reference Pi (see the [README](../README.md#tested-configuration) for the hardware). Unless stated otherwise these are single readings over Wi-Fi (the Pi moved to Ethernet on 2026-10-26, see [Ethernet](#ethernet)), so treat differences of a few points as noise.
+Lab notebook of the reference Pi (see the [README](../README.md#tested-with) for the hardware). Unless stated otherwise these are single readings over Wi-Fi (the Pi moved to Ethernet on 2026-10-26, see [Ethernet](#ethernet)), so treat differences of a few points as noise.
 
 ## Decode
 
@@ -61,6 +61,16 @@ All four feeds on Enhanced, one 5-second `top` sample each after a 60 s settle (
 
 With two cameras on Standard (H.264) and two on Enhanced (H.265), the H.264 feeds are decoded in software by ffmpeg (`av:h264` frame threads appear in `top`, and no ffmpeg process holds the Pi 4's H.264 block at `/dev/video10`), while the H.265 feeds still use the HEVC block. The same 15 fps wall then ran at 48% idle, clock 1500 MHz, `get_throttled` 0x0 and 68 C after about an hour. That is roughly 8 percentage points of total CPU more than the all-hardware case, about 0.3 of a core. Back on four H.265 cameras the temperature read 66 C, so the two software decodes account for only about 2 C.
 
+Moving the GStreamer wall's H.264 decoding onto the H.264 block made it worse (2026-10-28, one camera on H.264, three on H.265, all 1280x720 at 30 fps). With `-c:v h264_v4l2m2m` that camera's ffmpeg used about 148% CPU (about 48% for each H.265 one), the wall ran at 1.7% idle, and one stream fell 6.7 s behind; with the H.264 camera decoded in software, the same wall ran at 28% idle with every stream keeping up. One camera alone through the wall's filters (`fps=15,scale=960:540`) for 10 s, CPU user time:
+
+| Decoder | User CPU in 10 s |
+|---|---|
+| H.265, HEVC block (`-hwaccel drm`) | 2.0 s |
+| H.264, software | 3.5 s |
+| H.264, H.264 block (`h264_v4l2m2m`) | 18.3 s |
+
+All three delivered 150 frames in yuv420p, so the cost is not extra frames. It is probably reading the decoder's buffers, which the CPU accesses uncached, in the software scaler (not verified). The plane wall is not affected: the CPU never reads its pixels. The GStreamer wall therefore keeps H.264 in software.
+
 ## Power and cooling
 
 An earlier run on the same Pi with a weak supply and no cooling was throttled to 600 MHz, saturated the CPU and fell minutes behind. The hardware fixes mattered more than any pipeline tuning.
@@ -92,5 +102,22 @@ Under camwalld with the plane wall, as user `camwall`, 2026-10-26, Ethernet:
 | Frozen daemon (`systemctl kill -s STOP --kill-whom=main`) | Restarted by systemd about 34 s later (30 s watchdog plus 3 s restart delay) |
 | `WALL=gstreamer` | The GStreamer wall runs; removing the line switches back |
 | Several cameras restarted | Only their own tiles blank, each recovers by itself |
+| Wall stopped by camwalld (2026-10-27, `gpu_mem=256`; measured with the former `off` mode, the same state as no display) | No wall process, no camera connections, 98.9% CPU idle, 478 MB CMA free (about 438 MB with the wall running); the monitor shows the text console. `gpu_mem` is reserved outside CMA, so the CMA figures compare directly, but it leaves Linux 180 MB less RAM than the default 76 MB |
 
 The GStreamer wall, by contrast, uses the console's mode: booted without a monitor it got 1024x768 and showed a cropped wall once the monitor was plugged in.
+
+## A 4K camera in the plane wall
+
+One camera switched to its UniFi Protect High stream (3840x2160, H.265, 30 fps, 7.6 Mbit/s, a keyframe every 5 s), the other three on Medium (1280x720), 2026-10-28, one `tools/measure.sh` run right after a restart:
+
+| | 4× Medium | 1× 4K + 3× Medium |
+|---|---|---|
+| CPU idle | 96.1% | 94.0% (three 5 s samples) |
+| CMA used | 73 MB | 180 MB |
+| Wall resident memory | 68 MB | 94 MB |
+| Decoded frames (`check-hwdec.sh`) | about 120/s | about 120/s: every camera at its full 30 fps |
+| Socket backlog | 0 | 0, also on the 7.85 Mbit/s stream |
+
+The busiest camera thread rose to about 9% of a core and the display loop to about 6%. The picture was clean in the grid (the 4K frame scaled to a 960x540 tile by the display controller, without flicker) and much more detailed in single-camera view. A reconnect of that camera can take up to the 5 s keyframe interval before its tile shows a picture.
+
+From the HEVC decoder's rating (one 4K stream at 60 fps, about 500 megapixels per second; projected, not measured): four HD (1080p30) streams need about 250 Mpx/s, four 2K streams about 440, four 4K streams about 1000. So all four at HD should fit, 2K is tight, and 4K fits for one camera only. In Protect the High stream is also the recording, so its resolution is the recording resolution too.
