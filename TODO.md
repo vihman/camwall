@@ -35,7 +35,7 @@ Design in [docs/design.md](docs/design.md#home-assistant-integration).
 - [ ] H.264 cameras via `h264_v4l2m2m` (added 2026-10-27): all four cameras on H.264 run with `gpu_mem=256` (the default 76 MB is not enough), at the same CPU as H.265. Still to check: the tile's recovery after a camera restart; whether a smaller `gpu_mem` (128) suffices; and whether `avcodec_send_packet` returning `EAGAIN` (possible with v4l2m2m when its input queue is full) drops packets, since the loop does not resend them.
 - [ ] Restrict devices: check the `char-*` class names in `/proc/devices` (drm, video4linux, media, dma_heap, i2c), add `DevicePolicy=closed` + `DeviceAllow=` to the unit, and test both walls.
 - [ ] Consider `SystemCallFilter=@system-service` and `MemoryDenyWriteExecute=`. Python and the plane wall should cope; the GStreamer fallback may not (ORC JIT), so test it too.
-- [ ] Not yet tried with the new URLs: the GStreamer wall, `check-hwdec.sh --ab`, a non-UniFi source.
+- [ ] Not yet tried with the new URLs: `check-hwdec.sh --ab`, a non-UniFi source. (The GStreamer wall ran with them on 2026-10-28.)
 
 ## GStreamer wall (fallback only)
 
@@ -46,8 +46,8 @@ Only worth doing if the fallback is used regularly or the plane wall is abandone
   - the preflight's `/proc/PID/fd` check sees `/dev/video19`
 
 - [ ] GStreamer wall: raise the FIFO pipe size (`F_SETPIPE_SZ`) or use Unix sockets to cut the `filesrc` overhead, then re-run 30 fps. Without it, 30 fps saturates the CPU on Ethernet too (2026-10-26).
+- [ ] With a newer GStreamer than 1.26.2 in Pi OS: retry hardware decoding in GStreamer itself (`rtph264depay ! h264parse ! v4l2h264dec` for H.264, `v4l2slh265dec` for the SAND picture), which would avoid the ffmpeg copy and software scaling. See [Things that did not work](docs/design.md#things-that-did-not-work).
 - [ ] GStreamer wall: add black fallback tiles (`videotestsrc` + compositor `ignore-inactive-pads`), so one dead camera no longer blanks the whole wall.
-- [ ] Hardware H.264 for H.264 streams: `h264_v4l2m2m`, chosen per camera via `ffprobe`.
 
 ## Ideas
 
