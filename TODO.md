@@ -20,7 +20,6 @@ Design in [docs/design.md](docs/design.md#home-assistant-integration).
 - [x] Remote button: a Sonoff Zigbee button through Zigbee2MQTT and an HA automation; single press steps through the views (`select.select_next`, cycling), long press returns to All cameras (2026-10-28). Double press is free for info mode.
 - [ ] Info mode: run a Chromium kiosk under `cage` as a daemon child, mutually exclusive with the camera wall. Authenticate with a non-admin HA user's long-lived token, or with `trusted_networks` limited to the Pi.
 - [x] Single-camera modes `camera1`..`camera4`, switched live over the wall's stdin, and camera labels `CAM1_LABEL`..`CAM4_LABEL`: in use on the Pi from the HA select and a Zigbee button (2026-10-28).
-- [ ] Sharper single cameras: an optional `CAMn_FULL_URL` (e.g. the camera's 4K High stream) that only the camera in single view uses, while the grid stays on Medium. One 4K camera plus three Medium ones decodes at full rate (2026-10-28, see [measurements](docs/measurements.md#a-4k-camera-in-the-plane-wall)), and only one camera is ever in single view, so all four could have a 4K single view. Switching would reconnect that camera (up to the 5 s keyframe interval), so keep showing the Medium picture until the first 4K frame arrives.
 
 ## Phase 4: Repository hygiene (any time)
 
@@ -49,3 +48,13 @@ Only worth doing if the fallback is used regularly or the plane wall is abandone
 - [ ] GStreamer wall: raise the FIFO pipe size (`F_SETPIPE_SZ`) or use Unix sockets to cut the `filesrc` overhead, then re-run 30 fps. Without it, 30 fps saturates the CPU on Ethernet too (2026-10-26).
 - [ ] GStreamer wall: add black fallback tiles (`videotestsrc` + compositor `ignore-inactive-pads`), so one dead camera no longer blanks the whole wall.
 - [ ] Hardware H.264 for H.264 streams: `h264_v4l2m2m`, chosen per camera via `ffprobe`.
+
+## Ideas
+
+- [ ] Sharper single cameras: an optional `CAMn_FULL_URL` (e.g. the camera's 4K High stream) that only the camera in single view uses, while the grid stays on Medium. One 4K camera plus three Medium ones decodes at full rate (2026-10-28, see [measurements](docs/measurements.md#a-4k-camera-in-the-plane-wall)), and only one camera is ever in single view, so all four could have a 4K single view. Switching would reconnect that camera (up to the 5 s keyframe interval), so keep showing the Medium picture until the first 4K frame arrives.
+
+- [ ] More than four cameras (up to 16). Not measured; first test the Pi with the four URLs repeated to fill 9 and 16 tiles (`modetest -M vc4 -p` for the plane count; whether the kernel's HVS load check accepts 16 scaled planes; full frame rate).
+  - Configuration: no camera count setting; the highest `CAMn_URL` set gives the count, a gap leaves a black tile, so cameras can be placed by number. Other `CAMn_` settings and `<NAME>` templates work for any `n`. `GRID=auto` (default) picks the smallest of 2x2, 3x3, 4x4 that holds the cameras; a four-camera config stays as now.
+  - Layouts: square grids keep 16:9 tiles on a 16:9 screen with no bars (3x2 would show 640x360 pictures in 640x540 tiles). Later, named layouts with one large tile for camera 1, which also fill the screen: `1+5` (one 1280x720, five 640x360, on 3x3) and `1+7` (one 1440x810, seven 480x270, on 4x4). A layout is a table of blocks on the grid, so these are data, not new code paths.
+  - Estimates: 16 Medium (720p30) streams are about 440 Mpx/s against the HEVC decoder's about 500, so use the Low stream (640x360, about the 4x4 tile size) for large grids; about 18 MB CMA and 3% of a core per camera. A large tile benefits from a sharper stream (see `CAMn_FULL_URL`).
+  - Code: `MAXCAM` in `planes/common.h`, the fixed 2x2 in `planes/display.c`, `range(1, 5)` and `MODES` in `bin/camwalld` (the HA select follows).
