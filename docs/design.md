@@ -1,5 +1,37 @@
 # Design notes and findings
 
+## Overview
+
+```text
+camera 1..4 (RTSP or RTSPS from the cameras or a recorder)
+   |
+   |  camwall-planes, one thread per camera: RTSP(S) -> hardware decode
+   |  (H.265: rpi-hevc-dec; H.264: the H.264 block) -> DRM_PRIME frame, newest frame wins
+   v
+overlay planes on the HDMI output: the display controller scales and composes
+the 2x2 grid (or one camera full screen) at scanout (atomic KMS)
+   |
+   v
+HDMI monitor
+
+camwalld (systemd, Type=notify, watchdog): starts/stops camwall-planes on the DDC/CI
+display probe, switches the layout, optional MQTT
+```
+
+Repository layout:
+
+```text
+bin/camwalld                   the daemon run by the unit (installed to /usr/local/bin/camwalld)
+planes/                        the plane wall in C, built by install.sh (/usr/local/bin/camwall-planes):
+                                 stream.c (RTSP(S) + decode), display.c (KMS planes), main.c, Makefile
+bin/camwall                    the GStreamer wall, the fallback (/usr/local/bin/camwall)
+systemd/camwall.service        the service unit
+config/camwall.conf.example    template for /etc/camwall/camwall.conf (secrets live only there)
+install.sh                     installs or updates everything, safe to re-run
+tools/                         measure.sh, check-hwdec.sh, feed-info.sh, mqtt-test.py
+docs/                          the documentation
+```
+
 ## The plane wall
 
 `planes/` (`stream.c`: RTSPS and hardware decode; `display.c`: KMS planes and atomic commits; `main.c`: configuration and the loop that moves frames from streams to tiles), installed as `/usr/local/bin/camwall-planes` and run by camwalld (`WALL=planes`, the default). Goal: no CPU in the pixel path. Each camera is decoded by the hardware into DRM_PRIME frames and put on its own display overlay plane; the display controller (HVS) scales and composes at scanout.
@@ -75,6 +107,7 @@ Stock Pi OS ffmpeg decodes the same streams correctly with `-hwaccel drm` and ha
 | mpv from Debian Trixie (0.40) | No `v4l2request` hwdec, falls back to software. |
 | Kodi | Hardware decode works, but it shows one video at a time. |
 | ffmpeg `-tls_verify 0` | This ffmpeg build rejects the option for RTSP input. The connection works without it, which means the self-signed gateway certificate is not verified. Intentionally left unverified, since camwall is meant for an internal, protected network. |
+| `rtspsrc ! rtph264depay ! h264parse ! v4l2h264dec` (GStreamer 1.26.2), H.264 from UniFi Protect (2026-10-28) | Fails before the decoder: `rtph264depay` reports `Could not decode stream` and then `The stream is in the wrong format`, also with `avdec_h264` or no decoder at all; one run crashed (SIGSEGV) after `h264parse` reported a broken bit stream. ffmpeg reads the same streams without trouble. A 4K H.264 stream is also refused (`not-negotiated`): the Pi 4's H.264 block stops at about 1080p. So `v4l2h264dec` itself was never fed a valid frame. |
 | `-fflags nobuffer -flags low_delay -map 0:v:0` on ffmpeg | Removed after the tile widths looked wrong, but that turned out to be the 1024x768 fallback mode from booting with the monitor off. Never actually tested on the Pi; retry one at a time if latency matters. |
 
 ## Display presence detection
@@ -114,5 +147,5 @@ MQTT control is built (see [Operation](operation.md#mqtt)); the rest is planned,
 
 ## Ideas not built
 
-- Hardware H.264 in the GStreamer wall for cameras with Super Encoding unchecked: ffmpeg's `h264_v4l2m2m` (picking the decoder per camera via `ffprobe`), or `v4l2h264dec`. Not tried; the plane wall already uses `h264_v4l2m2m`.
+- Hardware H.264 in the GStreamer wall for cameras with Super Encoding unchecked: ffmpeg's `h264_v4l2m2m` (picking the decoder per camera via `ffprobe`), the route that works with Protect's streams (the plane wall already decodes H.264 in hardware with it). GStreamer's own `rtph264depay` cannot read Protect's H.264 (see [Things that did not work](#things-that-did-not-work)), so `v4l2h264dec` is no option there.
 - With the GStreamer wall: raising the FIFO pipe size (`F_SETPIPE_SZ`, capped by `/proc/sys/fs/pipe-max-size`) or using Unix sockets to cut the `filesrc` overhead; black fallback tiles via `videotestsrc` and the compositor's `ignore-inactive-pads`. Only worth doing if the plane wall is abandoned.
