@@ -16,12 +16,11 @@ Passed on 2026-10-26/27: camwalld runs the plane wall from boot with the monitor
 
 Design in [docs/design.md](docs/design.md#home-assistant-integration).
 - [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
-- [ ] MQTT in the daemon, built 2026-10-27 (generic topics, optional TLS, HA discovery on by default; see [docs/operation.md](docs/operation.md#mqtt)). On the Pi it connects over TLS (Let's Encrypt certificate) to the HA Mosquitto add-on and publishes its state and the discovery configs (2026-10-27). The HA select switches views (2026-10-27). Still to test: the Display sensor, the view surviving a restart and a monitor power cut, a broker outage.
-- [ ] Remote button in HA, mapped to the select entity. Candidate: a Sonoff Zigbee button through Zigbee2MQTT instead of the BILRESA; details to be agreed.
+- [ ] MQTT in the daemon (generic topics, optional TLS, HA discovery on by default; see [docs/operation.md](docs/operation.md#mqtt)). In use on the Pi over TLS with the HA Mosquitto add-on (2026-10-28). Still to check: the view surviving a restart and a monitor power cut, and a broker outage.
+- [x] Remote button: a Sonoff Zigbee button through Zigbee2MQTT and an HA automation; single press steps through the views (`select.select_next`, cycling), long press returns to All cameras (2026-10-28). Double press is free for info mode.
 - [ ] Info mode: run a Chromium kiosk under `cage` as a daemon child, mutually exclusive with the camera wall. Authenticate with a non-admin HA user's long-lived token, or with `trusted_networks` limited to the Pi.
-- [ ] Single-camera modes `camera1`..`camera4` (2026-10-27, switched live over the wall's stdin): tested off the Pi with a stub wall and the local broker; the C part not yet built. On the Pi check the full-screen picture, switching without flicker, `off` -> `cameraN`, and a camera restart in single view.
-- [ ] Camera labels `CAM1_LABEL`..`CAM4_LABEL` (2026-10-27): MQTT and the HA select use them; tested off the Pi with the local broker. On the Pi check the HA select and Status with real labels.
-- [ ] Sharper single cameras, if the upscaled 720p looks too soft: an optional `CAMn_FULL_URL` (e.g. the High stream) used only in single mode.
+- [x] Single-camera modes `camera1`..`camera4`, switched live over the wall's stdin, and camera labels `CAM1_LABEL`..`CAM4_LABEL`: in use on the Pi from the HA select and a Zigbee button (2026-10-28).
+- [ ] Sharper single cameras: an optional `CAMn_FULL_URL` (e.g. the camera's 4K High stream) that only the camera in single view uses, while the grid stays on Medium. One 4K camera plus three Medium ones decodes at full rate (2026-10-28, see [measurements](docs/measurements.md#a-4k-camera-in-the-plane-wall)), and only one camera is ever in single view, so all four could have a 4K single view. Switching would reconnect that camera (up to the 5 s keyframe interval), so keep showing the Medium picture until the first 4K frame arrives.
 
 ## Phase 4: Repository hygiene (any time)
 

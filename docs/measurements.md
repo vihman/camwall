@@ -1,6 +1,6 @@
 # Measurements
 
-Lab notebook of the reference Pi (see the [README](../README.md#tested-configuration) for the hardware). Unless stated otherwise these are single readings over Wi-Fi (the Pi moved to Ethernet on 2026-10-26, see [Ethernet](#ethernet)), so treat differences of a few points as noise.
+Lab notebook of the reference Pi (see the [README](../README.md#tested-with) for the hardware). Unless stated otherwise these are single readings over Wi-Fi (the Pi moved to Ethernet on 2026-10-26, see [Ethernet](#ethernet)), so treat differences of a few points as noise.
 
 ## Decode
 
@@ -95,3 +95,19 @@ Under camwalld with the plane wall, as user `camwall`, 2026-10-26, Ethernet:
 | Wall stopped by camwalld (2026-10-27, `gpu_mem=256`; measured with the former `off` mode, the same state as no display) | No wall process, no camera connections, 98.9% CPU idle, 478 MB CMA free (about 438 MB with the wall running); the monitor shows the text console. `gpu_mem` is reserved outside CMA, so the CMA figures compare directly, but it leaves Linux 180 MB less RAM than the default 76 MB |
 
 The GStreamer wall, by contrast, uses the console's mode: booted without a monitor it got 1024x768 and showed a cropped wall once the monitor was plugged in.
+
+## A 4K camera in the plane wall
+
+One camera switched to its UniFi Protect High stream (3840x2160, H.265, 30 fps, 7.6 Mbit/s, a keyframe every 5 s), the other three on Medium (1280x720), 2026-10-28, one `tools/measure.sh` run right after a restart:
+
+| | 4× Medium | 1× 4K + 3× Medium |
+|---|---|---|
+| CPU idle | 96.1% | 94.0% (three 5 s samples) |
+| CMA used | 73 MB | 180 MB |
+| Wall resident memory | 68 MB | 94 MB |
+| Decoded frames (`check-hwdec.sh`) | about 120/s | about 120/s: every camera at its full 30 fps |
+| Socket backlog | 0 | 0, also on the 7.85 Mbit/s stream |
+
+The busiest camera thread rose to about 9% of a core and the display loop to about 6%. The picture was clean in the grid (the 4K frame scaled to a 960x540 tile by the display controller, without flicker) and much more detailed in single-camera view. A reconnect of that camera can take up to the 5 s keyframe interval before its tile shows a picture.
+
+From the HEVC decoder's rating (one 4K stream at 60 fps, about 500 megapixels per second; projected, not measured): four HD (1080p30) streams need about 250 Mpx/s, four 2K streams about 440, four 4K streams about 1000. So all four at HD should fit, 2K is tight, and 4K fits for one camera only. In Protect the High stream is also the recording, so its resolution is the recording resolution too.

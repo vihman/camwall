@@ -20,7 +20,7 @@ For each camera, open its settings in Protect, go to the RTSP section, and enabl
 
 ### H.264 streams
 
-The wall is built and measured around H.265. H.264 also works: the plane wall decodes it on the Pi's separate H.264 block with FFmpeg's `h264_v4l2m2m` (tested on the Pi with all four cameras: the same CPU as H.265, about 23 MB more CMA per camera). That block allocates from the GPU's own memory, not CMA: with the default `gpu_mem=76` it failed with more than one camera (`Not enough GPU mem?` in `dmesg`, black tiles), and with `gpu_mem=256` in `/boot/firmware/config.txt` (under `[all]`, then reboot) all four ran. Lower values between those were not tried. H.265 streams do not need it. The GStreamer wall decodes H.264 in software (see [Measurements](measurements.md)), which costs more CPU.
+The wall is built and measured around H.265. H.264 also works: the plane wall decodes it on the Pi's separate H.264 block with FFmpeg's `h264_v4l2m2m` (tested on the Pi with all four cameras: the same CPU as H.265, about 23 MB more CMA per camera). That block allocates from the GPU's own memory, not CMA: with the default `gpu_mem=76` it failed with more than one camera (`Not enough GPU mem?` in `dmesg`, black tiles), and with `gpu_mem=256` in `/boot/firmware/config.txt` (under `[all]`, then reboot) all four ran. Lower values between those were not tried. H.265 streams do not need it. The H.264 block decodes up to about 1080p: a 4K H.264 stream is refused, so keep 4K cameras on H.265, which the HEVC block decodes at 4K. The GStreamer wall decodes H.264 in software (see [Measurements](measurements.md)), which costs more CPU.
 
 ## 2. Install packages
 
