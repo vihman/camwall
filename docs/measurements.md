@@ -61,6 +61,16 @@ All four feeds on Enhanced, one 5-second `top` sample each after a 60 s settle (
 
 With two cameras on Standard (H.264) and two on Enhanced (H.265), the H.264 feeds are decoded in software by ffmpeg (`av:h264` frame threads appear in `top`, and no ffmpeg process holds the Pi 4's H.264 block at `/dev/video10`), while the H.265 feeds still use the HEVC block. The same 15 fps wall then ran at 48% idle, clock 1500 MHz, `get_throttled` 0x0 and 68 C after about an hour. That is roughly 8 percentage points of total CPU more than the all-hardware case, about 0.3 of a core. Back on four H.265 cameras the temperature read 66 C, so the two software decodes account for only about 2 C.
 
+Moving the GStreamer wall's H.264 decoding onto the H.264 block made it worse (2026-10-28, one camera on H.264, three on H.265, all 1280x720 at 30 fps). With `-c:v h264_v4l2m2m` that camera's ffmpeg used about 148% CPU (about 48% for each H.265 one), the wall ran at 1.7% idle, and one stream fell 6.7 s behind; with the H.264 camera decoded in software, the same wall ran at 28% idle with every stream keeping up. One camera alone through the wall's filters (`fps=15,scale=960:540`) for 10 s, CPU user time:
+
+| Decoder | User CPU in 10 s |
+|---|---|
+| H.265, HEVC block (`-hwaccel drm`) | 2.0 s |
+| H.264, software | 3.5 s |
+| H.264, H.264 block (`h264_v4l2m2m`) | 18.3 s |
+
+All three delivered 150 frames in yuv420p, so the cost is not extra frames. It is probably reading the decoder's buffers, which the CPU accesses uncached, in the software scaler (not verified). The plane wall is not affected: the CPU never reads its pixels. The GStreamer wall therefore keeps H.264 in software.
+
 ## Power and cooling
 
 An earlier run on the same Pi with a weak supply and no cooling was throttled to 600 MHz, saturated the CPU and fell minutes behind. The hardware fixes mattered more than any pipeline tuning.

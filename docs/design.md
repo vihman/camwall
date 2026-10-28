@@ -108,6 +108,7 @@ Stock Pi OS ffmpeg decodes the same streams correctly with `-hwaccel drm` and ha
 | Kodi | Hardware decode works, but it shows one video at a time. |
 | ffmpeg `-tls_verify 0` | This ffmpeg build rejects the option for RTSP input. The connection works without it, which means the self-signed gateway certificate is not verified. Intentionally left unverified, since camwall is meant for an internal, protected network. |
 | `rtspsrc ! rtph264depay ! h264parse ! v4l2h264dec` (GStreamer 1.26.2), H.264 from UniFi Protect (2026-10-28) | Fails before the decoder: `rtph264depay` reports `Could not decode stream` and then `The stream is in the wrong format`, also with `avdec_h264` or no decoder at all; one run crashed (SIGSEGV) after `h264parse` reported a broken bit stream. ffmpeg reads the same streams without trouble. A 4K H.264 stream is also refused (`not-negotiated`): the Pi 4's H.264 block stops at about 1080p. So `v4l2h264dec` itself was never fed a valid frame. |
+| ffmpeg `-c:v h264_v4l2m2m` in the GStreamer wall (2026-10-28) | Decodes on the H.264 block, but the software scaler reading its output cost 18.3 s of CPU per 10 s against 3.5 s for software decoding, and saturated the wall. H.264 stays in software there; see [Measurements](measurements.md#mixed-h264-and-h265). |
 | `-fflags nobuffer -flags low_delay -map 0:v:0` on ffmpeg | Removed after the tile widths looked wrong, but that turned out to be the 1024x768 fallback mode from booting with the monitor off. Never actually tested on the Pi; retry one at a time if latency matters. |
 
 ## Display presence detection
@@ -147,5 +148,4 @@ MQTT control is built (see [Operation](operation.md#mqtt)); the rest is planned,
 
 ## Ideas not built
 
-- Hardware H.264 in the GStreamer wall for cameras with Super Encoding unchecked: ffmpeg's `h264_v4l2m2m` (picking the decoder per camera via `ffprobe`), the route that works with Protect's streams (the plane wall already decodes H.264 in hardware with it). GStreamer's own `rtph264depay` cannot read Protect's H.264 (see [Things that did not work](#things-that-did-not-work)), so `v4l2h264dec` is no option there.
 - With the GStreamer wall: raising the FIFO pipe size (`F_SETPIPE_SZ`, capped by `/proc/sys/fs/pipe-max-size`) or using Unix sockets to cut the `filesrc` overhead; black fallback tiles via `videotestsrc` and the compositor's `ignore-inactive-pads`. Only worth doing if the plane wall is abandoned.
