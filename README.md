@@ -6,11 +6,11 @@ Written with the help of Claude Sonnet 5.5
 
 ## Features
 
-- **Hardware decoding straight to the display.** The Pi 4's video blocks decode H.265 and H.264, and each decoded frame goes directly onto a display plane. The display controller scales and composes the wall as it scans out, so the CPU never touches a pixel. Four 1280x720 cameras at their full 30 fps leave the CPU about 96% idle. One 4K camera with three 720p cameras still leaves it 94% idle. Software decoding plus scaling, the older design, used about 72% of the CPU at 24 fps ([measurements](docs/measurements.md)).
+- **Hardware decoding straight to the display.** The Pi 4's hardware video decoders, dedicated circuits in its chip, decode H.265 and H.264, and each decoded frame goes directly onto a display plane. The display controller scales and composes the wall as it scans out, so the CPU never touches a pixel. Four cameras at their full frame rate leave the CPU almost idle, where the older software design could not keep up ([measurements](docs/measurements.md)).
 - **Grid or single camera.** Switch between the 2x2 grid and any one camera full screen instantly, without reconnecting.
 - **Any RTSP/RTSPS source** that sends H.265 or H.264: IP cameras or a recorder. One URL per tile, with shared parts such as host, port or token written once.
 - **Follows the monitor.** While the monitor has no power (detected over DDC/CI), nothing is decoded or streamed; the wall returns with the monitor.
-- **Optional MQTT control** with any broker, with TLS. Home Assistant discovers it automatically: a view selector, a status sensor and a display sensor, ready for a remote button.
+- **Optional remote control over MQTT**, plain or TLS. With Home Assistant, the wall appears automatically as a view selector, a status sensor and a display sensor, so HA automations and buttons can switch the view. Any other broker works too: publish the view to a topic and read the state back.
 - **Runs unattended.** A dead camera blanks only its own tile and reconnects by itself. A small daemon supervises the wall under systemd, with a watchdog, as an unprivileged, sandboxed user.
 
 ## Tested with
@@ -22,7 +22,9 @@ Written with the help of Claude Sonnet 5.5
 | Display | 1920x1080 HDMI monitor |
 | Cameras | UniFi Protect (G6 series), H.265 at 1280x720, one also at 3840x2160; H.264 tested as well |
 
-Other cameras and recorders should work if they send H.265 or H.264 over RTSP, but have not been tried. More than one H.264 camera needs `gpu_mem=256` ([installation](docs/installation.md#h264-streams)).
+Other cameras and recorders should work if they send H.265 or H.264 over RTSP, but have not been tried.
+
+Resolution is limited by the decoders, not the CPU. The HEVC decoder handles about one 4K stream at 60 fps in total, so one 4K camera fits next to three 720p ones (measured), four cameras at 1080p should fit (not measured), but four 4K cameras (twice the decoder's capacity) do not. The H.264 decoder stops at about 1080p per stream. Details in [measurements](docs/measurements.md#a-4k-camera-in-the-plane-wall). More than one H.264 camera needs `gpu_mem=256` ([installation](docs/installation.md#h264-streams)).
 
 ## Quick start
 
