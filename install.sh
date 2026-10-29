@@ -38,7 +38,7 @@ DAEMON=/usr/local/bin/camwalld      # supervisor, started by the unit
 PLANES=/usr/local/bin/camwall-planes  # the plane wall (WALL=planes, default)
 UNIT=/etc/systemd/system/camwall.service
 PACKAGES=(ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
-          gstreamer1.0-plugins-bad v4l-utils libdrm-tests ddcutil python3 python3-paho-mqtt
+          gstreamer1.0-plugins-bad v4l-utils libdrm-tests ddcutil python3 python3-paho-mqtt python3-pil
           gcc pkg-config libdrm-dev libavformat-dev libavcodec-dev libavutil-dev)
 
 changed=0; file_changed=0
