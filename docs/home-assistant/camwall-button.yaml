@@ -1,0 +1,50 @@
+# Home Assistant automation: a button with single, double and long presses
+# (e.g. a Sonoff Zigbee button through Zigbee2MQTT) switches camwall's view.
+#
+#   double press   show the dashboard (INFO_LABEL, default "Dashboard")
+#   single press   next camera view, skipping the dashboard
+#   long press     All cameras
+#   while the dashboard shows, any press returns to the view before it
+#
+# Needs camwall-previous.yaml (the input_text helper) and camwall's MQTT
+# discovery (select.camwall_mode). Adapt to your setup:
+#   - event.camwall_button_action: your button's event entity
+#   - single / double / long: the press names your button reports
+#   - Dashboard: your INFO_LABEL, if you changed it
+# Paste into a new automation (Settings > Automations > Create > Edit in YAML).
+alias: camwall button
+mode: queued
+triggers:
+  - trigger: state
+    entity_id: event.camwall_button_action
+    not_from: unavailable
+variables:
+  press: "{{ trigger.to_state.attributes.event_type }}"
+  view: "{{ states('select.camwall_mode') }}"
+  cams: "{{ state_attr('select.camwall_mode', 'options') | reject('eq', 'Dashboard') | list }}"
+  previous: "{{ states('input_text.camwall_previous') }}"
+actions:
+  - choose:
+      - conditions: "{{ view == 'Dashboard' }}"
+        sequence:
+          - action: select.select_option
+            target: { entity_id: select.camwall_mode }
+            data: { option: "{{ previous if previous in cams else 'All cameras' }}" }
+      - conditions: "{{ press == 'double' }}"
+        sequence:
+          - action: input_text.set_value
+            target: { entity_id: input_text.camwall_previous }
+            data: { value: "{{ view }}" }
+          - action: select.select_option
+            target: { entity_id: select.camwall_mode }
+            data: { option: Dashboard }
+      - conditions: "{{ press == 'single' }}"
+        sequence:
+          - action: select.select_option
+            target: { entity_id: select.camwall_mode }
+            data: { option: "{{ cams[(cams.index(view) + 1) % cams | length] if view in cams else cams[0] }}" }
+      - conditions: "{{ press == 'long' }}"
+        sequence:
+          - action: select.select_option
+            target: { entity_id: select.camwall_mode }
+            data: { option: All cameras }

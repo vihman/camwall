@@ -86,45 +86,10 @@ With `INFO_URL` set, one more mode shows an image full screen instead of the cam
 - **How it is drawn:** a child process (`camwalld --info`) writes the image to the console frame buffer (`/dev/fb0`), scaled to the screen if its size differs. The frame buffer has 16-bit colour on the Pi 4, so gradients show steps. An image that has not changed is not redrawn. A failed fetch keeps the last picture and is logged once.
 - **The image source:** the [Puppet](https://github.com/balloob/home-assistant-addons) add-on renders a dashboard view with a headless browser on the Home Assistant machine and serves it as an image, for example `http://<home assistant>:10000/lovelace/0?viewport=1920x1080` (options such as `&dark` or `&zoom=1.5` are in its README). Give it the long-lived token of a dedicated non-admin user. Puppet's port has no authentication, so allow only the Pi to reach it (see [Security](security.md)). Any other URL that returns an image works too.
 
-A button automation for a Zigbee button with single, double and long presses, through Zigbee2MQTT: double press shows the dashboard, and while it shows, any press returns to the view before. It needs an `input_text` helper for that view. The entity names and press names below are examples; adapt them to your button. Not yet tested on the reference system.
+Example Home Assistant files, in [docs/home-assistant/](home-assistant/):
 
-```yaml
-alias: camwall button
-mode: queued
-triggers:
-  - trigger: state
-    entity_id: event.camwall_button_action      # the button's event entity
-    not_from: unavailable
-variables:
-  press: "{{ trigger.to_state.attributes.event_type }}"   # single, double, long
-  view: "{{ states('select.camwall_mode') }}"
-  cams: "{{ state_attr('select.camwall_mode', 'options') | reject('eq', 'Dashboard') | list }}"
-actions:
-  - choose:
-      - conditions: "{{ view == 'Dashboard' }}"       # any press: back to the view before
-        sequence:
-          - action: select.select_option
-            target: { entity_id: select.camwall_mode }
-            data: { option: "{{ states('input_text.camwall_previous') if states('input_text.camwall_previous') in cams else 'All cameras' }}" }
-      - conditions: "{{ press == 'double' }}"
-        sequence:
-          - action: input_text.set_value
-            target: { entity_id: input_text.camwall_previous }
-            data: { value: "{{ view }}" }
-          - action: select.select_option
-            target: { entity_id: select.camwall_mode }
-            data: { option: Dashboard }
-      - conditions: "{{ press == 'single' }}"         # next camera view, skipping Dashboard
-        sequence:
-          - action: select.select_option
-            target: { entity_id: select.camwall_mode }
-            data: { option: "{{ cams[(cams.index(view) + 1) % cams | length] if view in cams else cams[0] }}" }
-      - conditions: "{{ press == 'long' }}"
-        sequence:
-          - action: select.select_option
-            target: { entity_id: select.camwall_mode }
-            data: { option: All cameras }
-```
+- [camwall-button.yaml](home-assistant/camwall-button.yaml): an automation for a button with single, double and long presses (for example a Sonoff Zigbee button through Zigbee2MQTT). Double press shows the dashboard, single press steps through the camera views, long press shows all cameras, and while the dashboard shows, any press returns to the view before it. Adapt the button's entity and press names as described in the file. Not yet tested on the reference system.
+- [camwall-previous.yaml](home-assistant/camwall-previous.yaml): the `input_text` helper that holds the view before the dashboard.
 
 ## Switching to the GStreamer wall
 

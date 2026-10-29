@@ -1,0 +1,7 @@
+# Helper for camwall-button.yaml: the view shown before the dashboard.
+# Either create it in the UI (Settings > Devices & services > Helpers > Text,
+# name "camwall previous", max length 32), or add this to configuration.yaml.
+input_text:
+  camwall_previous:
+    name: camwall previous
+    max: 32
