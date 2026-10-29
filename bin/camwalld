@@ -335,14 +335,20 @@ def show_info():
     last, failing = None, False
     while True:
         try:
+            t0 = time.monotonic()
             with urllib.request.urlopen(url, timeout=60) as r:
                 data = r.read()
+            fetched = time.monotonic() - t0
             if data != last:
-                draw(Image.open(io.BytesIO(data)))
+                img = Image.open(io.BytesIO(data))
+                draw(img)
+                if last is None or failing:
+                    log(f"info: showing the dashboard ({img.width}x{img.height}, "
+                        f"{len(data) // 1024} kB, fetched in {fetched:.1f} s)")
                 last = data
-            if failing:
+            elif failing:
                 log("info: showing the dashboard again")
-                failing = False
+            failing = False
         except Exception as e:   # never die over one bad fetch or image
             if not failing:
                 log(f"info: cannot show the dashboard ({e}), keeping the last picture")
