@@ -11,6 +11,7 @@ Written with the help of Claude Sonnet 5.5
 - **Any RTSP/RTSPS source** that sends H.265 or H.264: IP cameras or a recorder. One URL per tile, with shared parts such as host, port or token written once.
 - **Follows the monitor.** While the monitor has no power (detected over DDC/CI), nothing is decoded or streamed; the wall returns with the monitor.
 - **Optional remote control over MQTT**, plain or TLS. With Home Assistant, the wall appears automatically as a view selector, a status sensor and a display sensor, so HA automations and buttons can switch the view. Any other broker works too: publish the view to a topic and read the state back.
+- **Optional dashboard view.** An image, such as a Home Assistant dashboard rendered on the HA machine, shown full screen in place of the cameras and refreshed periodically. No browser runs on the Pi.
 - **Runs unattended.** A dead camera blanks only its own tile and reconnects by itself. A small daemon supervises the wall under systemd, with a watchdog, as an unprivileged, sandboxed user.
 
 ## Tested with
@@ -57,6 +58,7 @@ On the Pi, over SSH:
 | `CAM1_LABEL`..`CAM4_LABEL` | `Camera 1`.. | Camera names for MQTT, Home Assistant and the status |
 | `DISPLAY_PROBE` | `ddcutil ... getvcp d6` | Command that succeeds while the monitor is on; `none` disables the check |
 | `MQTT` | `no` | `yes` enables MQTT control; settings in [docs/operation.md](docs/operation.md#mqtt) |
+| `INFO_URL` | (none) | Image URL for the dashboard view; settings in [docs/operation.md](docs/operation.md#dashboard-info-mode) |
 | `WALL` | `planes` | `gstreamer` selects the older fallback wall |
 
 ## Operation

@@ -46,7 +46,7 @@ Topics, with the default prefix:
 
 | Topic | Direction | Payload |
 |---|---|---|
-| `camwall/mode/set` | to camwall | a mode's label, in any letter case, or its id: `All cameras` / `cameras` (the 2x2 grid), the `CAMn_LABEL`s / `camera1`..`camera4` (that camera full screen). Anything else is logged and ignored |
+| `camwall/mode/set` | to camwall | a mode's label, in any letter case, or its id: `All cameras` / `cameras` (the 2x2 grid), the `CAMn_LABEL`s / `camera1`..`camera4` (that camera full screen), `INFO_LABEL` / `info` (the [dashboard](#dashboard-info-mode), if configured). Anything else is logged and ignored |
 | `camwall/mode` | from camwall, retained | the current mode's label, e.g. `All cameras`, `Gate` |
 | `camwall/status` | from camwall, retained | the same text as the `Status:` line of `systemctl status camwall`, e.g. `planes wall running`, `planes wall running, Gate`, `no display, idle (Display not found)` |
 | `camwall/display` | from camwall, retained | `on` while a monitor is detected, `off` without one (the display probe) |
@@ -56,7 +56,7 @@ Topics, with the default prefix:
 - **There is no off mode:** the wall stops by itself while no monitor is detected ([Display presence](#display-presence)) and `display` turns `off`. The chosen view is kept, and a view chosen meanwhile is remembered; the wall comes back in it with the monitor. To stop the wall by hand, use `sudo systemctl stop camwall`.
 - **Labels:** `CAM1_LABEL`..`CAM4_LABEL` (default `Camera 1`..`Camera 4`) name the cameras for MQTT, Home Assistant and the status. They must be unique, ignoring case, at most 32 characters, and different from the other labels and ids. camwalld saves the mode by id, so renaming a camera keeps the saved mode; Home Assistant shows a new label after camwalld restarts.
 - **Switching between `cameras` and `cameraN`** does not restart the wall: all four cameras keep decoding, and the switch takes effect at the next display tick. Only the plane wall can do this; with `WALL=gstreamer` the single-camera modes show the grid, and camwalld logs that once.
-- **The mode persists:** camwalld saves it in `/var/lib/camwall/mode`, so `off` survives a restart, a reboot or a broker outage. With `MQTT=no` the saved mode is ignored and the wall always runs, since nothing could switch it back on.
+- **The mode persists:** camwalld saves it in `/var/lib/camwall/mode`, so the view survives a restart, a reboot or a broker outage. With `MQTT=no` the saved mode is ignored and the wall always runs, since nothing could switch it back on.
 - **A broker that is down never stops the wall:** camwalld logs the lost connection once and reconnects by itself (after 1 s, backing off to at most 60 s).
 
 `tools/mqtt-test.py` checks the settings step by step and stops at the first failure. The steps are the settings, the name lookup, TCP, TLS (with the certificate's subject, issuer and expiry), the MQTT login, and the retained messages on camwall's topics. `--set MODE` (for example `--set camera2`) also sends a command. It uses sudo to read the configuration and prints no password. When camwalld cannot connect, its log line names the cause too, for example `cannot connect to host:8883 (TLS certificate: IP address mismatch, ...)`.
@@ -71,6 +71,60 @@ mosquitto_pub -h <broker> -u <user> -P <password> -t camwall/mode/set -m cameras
 ### Home Assistant
 
 With the default `MQTT_DISCOVERY=homeassistant`, a device named after `MQTT_TOPIC` appears in Home Assistant's MQTT integration as soon as camwalld connects. It has a **Mode** select, whose options are the labels (`All cameras` and the four `CAMn_LABEL`s), a **Status** sensor and a **Display** binary sensor, and all show as unavailable while camwalld is offline. With the Mosquitto broker add-on, create a user for the Pi in the add-on's configuration (or as a Home Assistant user) and put it in `MQTT_USER` and `MQTT_PASSWORD`. Automations, for example a button press, call `select.select_option` on the Mode entity.
+
+### Dashboard (info mode)
+
+With `INFO_URL` set, one more mode shows an image full screen instead of the cameras, fetched again every `INFO_INTERVAL` seconds. It is meant for a Home Assistant dashboard rendered on the Home Assistant machine, so the Pi runs no browser and holds no Home Assistant token.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `INFO_URL` | (none: no info mode) | `http://` or `https://` URL of a PNG, JPEG or BMP; `<NAME>` templates work |
+| `INFO_LABEL` | `Dashboard` | The mode's name in MQTT and Home Assistant, unique like the camera labels |
+| `INFO_INTERVAL` | `60` | Seconds between fetches, 10 to 3600 |
+
+- **Showing it stops the wall:** both use the display, so the camera streams stop while the dashboard shows and restart when a camera view is chosen again (a few seconds until the first picture). Without a monitor nothing is fetched.
+- **How it is drawn:** a child process (`camwalld --info`) writes the image to the console frame buffer (`/dev/fb0`), scaled to the screen if its size differs. The frame buffer has 16-bit colour on the Pi 4, so gradients show steps. An image that has not changed is not redrawn. A failed fetch keeps the last picture and is logged once.
+- **The image source:** the [Puppet](https://github.com/balloob/home-assistant-addons) add-on renders a dashboard view with a headless browser on the Home Assistant machine and serves it as an image, for example `http://<home assistant>:10000/lovelace/0?viewport=1920x1080` (options such as `&dark` or `&zoom=1.5` are in its README). Give it the long-lived token of a dedicated non-admin user. Puppet's port has no authentication, so allow only the Pi to reach it (see [Security](security.md)). Any other URL that returns an image works too.
+
+A button automation for a Zigbee button with single, double and long presses, through Zigbee2MQTT: double press shows the dashboard, and while it shows, any press returns to the view before. It needs an `input_text` helper for that view. The entity names and press names below are examples; adapt them to your button. Not yet tested on the reference system.
+
+```yaml
+alias: camwall button
+mode: queued
+triggers:
+  - trigger: state
+    entity_id: event.camwall_button_action      # the button's event entity
+    not_from: unavailable
+variables:
+  press: "{{ trigger.to_state.attributes.event_type }}"   # single, double, long
+  view: "{{ states('select.camwall_mode') }}"
+  cams: "{{ state_attr('select.camwall_mode', 'options') | reject('eq', 'Dashboard') | list }}"
+actions:
+  - choose:
+      - conditions: "{{ view == 'Dashboard' }}"       # any press: back to the view before
+        sequence:
+          - action: select.select_option
+            target: { entity_id: select.camwall_mode }
+            data: { option: "{{ states('input_text.camwall_previous') if states('input_text.camwall_previous') in cams else 'All cameras' }}" }
+      - conditions: "{{ press == 'double' }}"
+        sequence:
+          - action: input_text.set_value
+            target: { entity_id: input_text.camwall_previous }
+            data: { value: "{{ view }}" }
+          - action: select.select_option
+            target: { entity_id: select.camwall_mode }
+            data: { option: Dashboard }
+      - conditions: "{{ press == 'single' }}"         # next camera view, skipping Dashboard
+        sequence:
+          - action: select.select_option
+            target: { entity_id: select.camwall_mode }
+            data: { option: "{{ cams[(cams.index(view) + 1) % cams | length] if view in cams else cams[0] }}" }
+      - conditions: "{{ press == 'long' }}"
+        sequence:
+          - action: select.select_option
+            target: { entity_id: select.camwall_mode }
+            data: { option: All cameras }
+```
 
 ## Switching to the GStreamer wall
 
