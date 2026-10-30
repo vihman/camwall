@@ -33,7 +33,9 @@ Configuration comes from the environment (systemd EnvironmentFile):
                                discovery prefix, default homeassistant; none disables).
                                Topics: <topic>/availability, <topic>/mode, <topic>/mode/set
                                (cameras, camera1..camera4, info, or their labels), <topic>/status,
-                               <topic>/display (on/off). Needs python3-paho-mqtt.
+                               <topic>/display (on/off), <topic>/camera1..camera4 (on/off, a
+                               picture shows; plane wall only), <topic>/wall (online while
+                               the plane wall runs). Needs python3-paho-mqtt.
   INFO_URL                     optional: http(s):// URL of an image to show full screen in
                                the info mode, e.g. a Home Assistant dashboard rendered by
                                the Puppet add-on; <NAME> templates as in CAMn_URL. Without
@@ -64,6 +66,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 
@@ -199,6 +202,7 @@ class Wall:
         self.proc = None
         self.started = 0.0
         self.warned_layout = False
+        self.cameras = queue.SimpleQueue()   # (process, camera number, up) from the plane wall
 
     def start(self, layout):
         """Start in layout 0 (the 2x2 grid) or N (camera N full screen)."""
@@ -209,12 +213,23 @@ class Wall:
             del env[k]                  # the broker password stays in this process
         for i, url in enumerate(self.cfg.urls, 1):
             env[f"CAM{i}_URL"] = url
-        # the plane wall takes "layout N" lines on stdin
+        # the plane wall takes "layout N" lines on stdin and prints "camN up|down"
+        planes = self.cfg.wall == "planes"
         self.proc = subprocess.Popen([self.cfg.wall_cmd], env=env, start_new_session=True,
-                                     stdin=subprocess.PIPE if self.cfg.wall == "planes"
-                                     else subprocess.DEVNULL)
+                                     stdin=subprocess.PIPE if planes else subprocess.DEVNULL,
+                                     stdout=subprocess.PIPE if planes else None)
+        if planes:
+            threading.Thread(target=self._read_cameras, args=(self.proc,), daemon=True).start()
         self.started = time.monotonic()
         log(f"started the {self.cfg.wall} wall (pid {self.proc.pid})")
+
+    def _read_cameras(self, proc):
+        """Until the wall exits: its "camN up|down" lines into self.cameras."""
+        for line in proc.stdout:
+            m = re.fullmatch(rb"cam([1-4]) (up|down)\n?", line)
+            if m:
+                self.cameras.put((proc, int(m[1]), m[2] == b"up"))
+        proc.stdout.close()
 
     def set_layout(self, layout):
         """Switch the running wall's layout without restarting it."""
@@ -550,6 +565,15 @@ class Mqtt:
                                               "state_topic": f"{t}/display",
                                               "payload_on": "on", "payload_off": "off",
                                               "icon": "mdi:monitor"}),
+        ] + [
+            # unavailable while the plane wall is not running: then nobody watches the camera
+            (f"binary_sensor/{uid}/camera{n}", {
+                "device": device, "name": self.label[f"camera{n}"],
+                "unique_id": f"{uid}_camera{n}", "state_topic": f"{t}/camera{n}",
+                "payload_on": "on", "payload_off": "off", "device_class": "connectivity",
+                "availability": [{"topic": f"{t}/availability"}, {"topic": f"{t}/wall"}],
+                "availability_mode": "all"})
+            for n in range(1, 5)
         ]
 
 
@@ -640,6 +664,7 @@ def main():
 
     present = None        # None until the first probe
     shown = None          # display state last published over MQTT
+    watched = None        # camera sensors last published as available (plane wall running)
     fails = 0
     restarts = 0
     restart_at = 0.0      # monotonic time when an exited wall may start again
@@ -711,6 +736,17 @@ def main():
                 child = wanted()
                 child.start(LAYOUT.get(mode, 0))
                 status(running())
+
+            while not wall.cameras.empty():
+                proc, n, up = wall.cameras.get()
+                if child is wall and proc is wall.proc:   # not lines from a stopped wall
+                    log(f"{cfg.label[f'camera{n}']} (camera {n}) {'up' if up else 'down'}")
+                    if mqtt:
+                        mqtt.publish(f"camera{n}", "on" if up else "off")
+            watching = child is wall and cfg.wall == "planes"
+            if mqtt and watching != watched:
+                mqtt.publish("wall", "online" if watching else "offline")
+                watched = watching
 
             time.sleep(1)
     except Stop:

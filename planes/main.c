@@ -12,6 +12,8 @@
  *              WALL_LAYOUT (0 = the 2x2 grid, default; N = camera N full screen)
  * stdin:       lines "layout N" switch the layout while running (camwalld sends
  *              them); all cameras keep decoding, so a switch is immediate.
+ * stdout:      lines "camN up" (a picture shows) and "camN down" (the tile is
+ *              black), on each change; camwalld reports them over MQTT.
  * Missing configuration exits with 78 (EX_CONFIG); camwalld does not restart on it.
  * Normally started by camwalld (bin/camwalld), built and installed by install.sh.
  *
@@ -33,6 +35,7 @@
 #include "stream.h"
 
 #define STALE_MS 3000   /* hide a tile when no new frame for this long */
+#define FIRST_MS 20000  /* report a camera down that shows nothing this long after start */
 
 volatile sig_atomic_t g_stop;
 
@@ -139,6 +142,9 @@ int main(void)
     int64_t period = 1000000000LL / fps;
     struct timespec next;
     clock_gettime(CLOCK_MONOTONIC, &next);
+    int64_t t0 = now_ms();
+    int up[MAXCAM];                              /* reported state: -1 none yet, 0 down, 1 up */
+    for (int i = 0; i < ncam; i++) up[i] = -1;
 
     while (!g_stop) {
         next.tv_nsec += period;
@@ -155,6 +161,12 @@ int main(void)
             int stale;
             AVFrame *f = stream_take(&g_stream[i], t, STALE_MS, &stale);
             changed |= display_update_tile(&g_disp, i, f, stale, g_stream[i].name);
+            int now_up = !stale;
+            if (now_up != up[i] && (now_up || up[i] == 1 || t - t0 > FIRST_MS)) {
+                up[i] = now_up;
+                printf("%s %s\n", g_stream[i].name, now_up ? "up" : "down");
+                fflush(stdout);
+            }
         }
         display_present(&g_disp, changed);
     }

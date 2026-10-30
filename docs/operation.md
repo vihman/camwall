@@ -50,6 +50,8 @@ Topics, with the default prefix:
 | `camwall/mode` | from camwall, retained | the current mode's label, e.g. `All cameras`, `Gate` |
 | `camwall/status` | from camwall, retained | the same text as the `Status:` line of `systemctl status camwall`, e.g. `planes wall running`, `planes wall running, Gate`, `no display, idle (Display not found)` |
 | `camwall/display` | from camwall, retained | `on` while a monitor is detected, `off` without one (the display probe) |
+| `camwall/camera1`..`camera4` | from camwall, retained | `on` while the camera's tile shows a picture, `off` when it is black (no frame for 3 s, or none within 20 s of the wall's start). Plane wall only |
+| `camwall/wall` | from camwall, retained | `online` while the plane wall runs, `offline` otherwise (no monitor, the dashboard, a restart, `WALL=gstreamer`); the camera topics are only current while it is `online` |
 | `camwall/availability` | from camwall, retained | `online`, or `offline` (also sent by the broker as the Last Will if camwalld disappears) |
 
 - **`cameras`** shows the 2x2 grid; **`camera1`**..**`camera4`** show that one camera on the whole screen (its 1280x720 stream scaled up by the display controller, so a little softer than a tile).
@@ -70,7 +72,7 @@ mosquitto_pub -h <broker> -u <user> -P <password> -t camwall/mode/set -m cameras
 
 ### Home Assistant
 
-With the default `MQTT_DISCOVERY=homeassistant`, a device named after `MQTT_TOPIC` appears in Home Assistant's MQTT integration as soon as camwalld connects. It has a **Mode** select, whose options are the labels (`All cameras` and the four `CAMn_LABEL`s), a **Status** sensor and a **Display** binary sensor, and all show as unavailable while camwalld is offline. With the Mosquitto broker add-on, create a user for the Pi in the add-on's configuration (or as a Home Assistant user) and put it in `MQTT_USER` and `MQTT_PASSWORD`. Automations, for example a button press, call `select.select_option` on the Mode entity.
+With the default `MQTT_DISCOVERY=homeassistant`, a device named after `MQTT_TOPIC` appears in Home Assistant's MQTT integration as soon as camwalld connects. It has a **Mode** select, whose options are the labels (`All cameras` and the four `CAMn_LABEL`s), a **Status** sensor, a **Display** binary sensor, and one connectivity binary sensor per camera, named after its `CAMn_LABEL` (connected while its tile shows a picture). All show as unavailable while camwalld is offline; the camera sensors also while the plane wall is not running, since then nothing watches the cameras. With the Mosquitto broker add-on, create a user for the Pi in the add-on's configuration (or as a Home Assistant user) and put it in `MQTT_USER` and `MQTT_PASSWORD`. Automations, for example a button press, call `select.select_option` on the Mode entity.
 
 ### Dashboard (info mode)
 

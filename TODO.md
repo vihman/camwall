@@ -15,7 +15,7 @@ Passed on 2026-10-26/27: camwalld runs the plane wall from boot with the monitor
 ## Phase 3: Home Assistant (after the wall is stable)
 
 Design in [docs/design.md](docs/design.md#home-assistant-integration).
-- [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
+- [ ] Per-camera sensors: the plane wall prints `camN up`/`camN down`, camwalld publishes `<topic>/camera1`..`camera4` and an HA connectivity sensor per camera, unavailable while the plane wall is not running (written 2026-10-31; tested with a fake wall, not yet on the Pi). Still to check on the Pi: a camera unplugged turns its sensor off within a few seconds and on again when it returns; the sensors turn unavailable with the monitor off and on the dashboard.
 - [ ] MQTT in the daemon (generic topics, optional TLS, HA discovery on by default; see [docs/operation.md](docs/operation.md#mqtt)). In use on the Pi over TLS with the HA Mosquitto add-on (2026-10-28). Still to check: the view surviving a restart and a monitor power cut, and a broker outage.
 - [x] Remote button: a Sonoff Zigbee button through Zigbee2MQTT and an HA automation; single press steps through the views (`select.select_next`, cycling), long press returns to All cameras (2026-10-28). Double press is free for info mode.
 - [x] Info mode: an HA dashboard as an image (Puppet add-on on HA, `INFO_URL`), drawn on the frame buffer by camwalld (built 2026-10-29; in use on the Pi with a 32-bit frame buffer and the button, 2026-10-30). A monitor power cut while it shows stops it and shows it again when power returns; while it shows, the CPU is 98.8% idle with no camera streams (2026-10-30).

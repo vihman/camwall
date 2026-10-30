@@ -10,7 +10,7 @@ Written with the help of Claude Sonnet 5.5
 - **Grid or single camera.** Switch between the 2x2 grid and any one camera full screen instantly, without reconnecting.
 - **Any RTSP/RTSPS source** that sends H.265 or H.264: IP cameras or a recorder. One URL per tile, with shared parts such as host, port or token written once.
 - **Follows the monitor.** While the monitor has no power (detected over DDC/CI), nothing is decoded or streamed; the wall returns with the monitor.
-- **Optional remote control over MQTT**, plain or TLS. With Home Assistant, the wall appears automatically as a view selector, a status sensor and a display sensor, so HA automations and buttons can switch the view. Any other broker works too: publish the view to a topic and read the state back.
+- **Optional remote control over MQTT**, plain or TLS. With Home Assistant, the wall appears automatically as a view selector, a status sensor, a display sensor and a sensor per camera, so HA automations and buttons can switch the view. Any other broker works too: publish the view to a topic and read the state back.
 - **Optional dashboard view.** An image, such as a Home Assistant dashboard rendered on the HA machine, shown full screen in place of the cameras and refreshed periodically. No browser runs on the Pi.
 - **Runs unattended.** A dead camera blanks only its own tile and reconnects by itself. A small daemon supervises the wall under systemd, with a watchdog, as an unprivileged, sandboxed user.
 
