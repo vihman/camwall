@@ -18,7 +18,7 @@ Design in [docs/design.md](docs/design.md#home-assistant-integration).
 - [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
 - [ ] MQTT in the daemon (generic topics, optional TLS, HA discovery on by default; see [docs/operation.md](docs/operation.md#mqtt)). In use on the Pi over TLS with the HA Mosquitto add-on (2026-10-28). Still to check: the view surviving a restart and a monitor power cut, and a broker outage.
 - [x] Remote button: a Sonoff Zigbee button through Zigbee2MQTT and an HA automation; single press steps through the views (`select.select_next`, cycling), long press returns to All cameras (2026-10-28). Double press is free for info mode.
-- [ ] Info mode: run a Chromium kiosk under `cage` as a daemon child, mutually exclusive with the camera wall. Authenticate with a non-admin HA user's long-lived token, or with `trusted_networks` limited to the Pi.
+- [x] Info mode: an HA dashboard as an image (Puppet add-on on HA, `INFO_URL`), drawn on the frame buffer by camwalld (built 2026-10-29; in use on the Pi with a 32-bit frame buffer and the button, 2026-10-30). A monitor power cut while it shows stops it and shows it again when power returns; while it shows, the CPU is 98.8% idle with no camera streams (2026-10-30).
 - [x] Single-camera modes `camera1`..`camera4`, switched live over the wall's stdin, and camera labels `CAM1_LABEL`..`CAM4_LABEL`: in use on the Pi from the HA select and a Zigbee button (2026-10-28).
 
 ## Phase 4: Repository hygiene (any time)

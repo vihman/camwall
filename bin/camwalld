@@ -32,8 +32,14 @@ Configuration comes from the environment (systemd EnvironmentFile):
                                (camwall-<hostname>), MQTT_DISCOVERY (Home Assistant
                                discovery prefix, default homeassistant; none disables).
                                Topics: <topic>/availability, <topic>/mode, <topic>/mode/set
-                               (cameras, camera1..camera4, or their labels), <topic>/status,
+                               (cameras, camera1..camera4, info, or their labels), <topic>/status,
                                <topic>/display (on/off). Needs python3-paho-mqtt.
+  INFO_URL                     optional: http(s):// URL of an image to show full screen in
+                               the info mode, e.g. a Home Assistant dashboard rendered by
+                               the Puppet add-on; <NAME> templates as in CAMn_URL. Without
+                               it there is no info mode. Needs python3-pil.
+  INFO_LABEL                   name of the info mode (default "Dashboard")
+  INFO_INTERVAL                seconds between fetches of INFO_URL (default 60)
 The GStreamer wall reads its own settings (FPS, TILE_*, STREAM_TIMEOUT) itself.
 
 A configuration error exits with 78 (EX_CONFIG), which the unit does not restart on.
@@ -43,8 +49,10 @@ this daemon exit with 78 too.
   camwalld --url N|-   read /etc/camwall/camwall.conf, print camera N's expanded URL
                        (or that of a template read from stdin) and exit; used by the
                        tools in tools/
+  camwalld --info      the info mode's child process (started by camwalld itself)
 """
 
+import io
 import json
 import os
 import queue
@@ -57,6 +65,7 @@ import ssl
 import subprocess
 import sys
 import time
+import urllib.request
 
 EX_CONFIG = 78
 BIN_DIR = os.environ.get("CAMWALL_BIN_DIR", "/usr/local/bin")   # override for testing
@@ -64,9 +73,12 @@ WALLS = {"planes": "camwall-planes", "gstreamer": "camwall"}
 BACKOFF = (2, 4, 8, 16, 30)   # seconds before restarting a wall that exited
 HEALTHY = 60                  # a wall that ran this long resets the backoff
 STOP_GRACE = 10               # seconds between SIGTERM and SIGKILL
-MODES = ("cameras", "camera1", "camera2", "camera3", "camera4")   # first is the default
+MODES = ("cameras", "camera1", "camera2", "camera3", "camera4", "info")   # first is the default;
+                                                                          # info only with INFO_URL
 LAYOUT = {"cameras": 0, "camera1": 1, "camera2": 2, "camera3": 3, "camera4": 4}   # 0 = 2x2 grid
 STATE_DIR = os.environ.get("STATE_DIRECTORY")   # /var/lib/camwall under systemd
+FB_SYS = os.environ.get("CAMWALL_FB_SYS", "/sys/class/graphics/fb0")   # overrides for testing
+FB_DEV = os.environ.get("CAMWALL_FB_DEV", "/dev/fb0")
 
 
 def log(msg):
@@ -101,7 +113,7 @@ def notify(msg):
         log(f"sd_notify failed: {e}")
 
 
-def expand_url(name, template):
+def expand_url(name, template, schemes=("rtsp", "rtsps")):
     """Replace each <VAR> with the config variable VAR. Errors name the variable,
     never the value (URLs and tokens are credentials)."""
     def var(m):
@@ -110,8 +122,9 @@ def expand_url(name, template):
             config_error(f"{name} uses <{m.group(1)}>, which is not set")
         return value
     url = re.sub(r"<([A-Za-z_][A-Za-z0-9_]*)>", var, template)
-    if not re.match(r"rtsps?://[^/\s]", url) or re.search(r"[<>\s]", url):
-        config_error(f"{name} must be an rtsp:// or rtsps:// URL without spaces")
+    if not re.match(rf"({'|'.join(schemes)})://[^/\s]", url) or re.search(r"[<>\s]", url):
+        config_error(f"{name} must be a {' or '.join(s + '://' for s in schemes)} URL "
+                     "without spaces")
     return url
 
 
@@ -129,17 +142,23 @@ def camera_labels():
     """Mode id -> the text MQTT, Home Assistant and the status show for it."""
     label = {"cameras": "All cameras"}
     seen = {t.lower() for t in MODES} | {t.lower() for t in label.values()}
-    for i in range(1, 5):
-        given = os.environ.get(f"CAM{i}_LABEL", "").strip()
-        text = given or f"Camera {i}"
+
+    def add(mode, var, default):
+        given = os.environ.get(var, "").strip()
+        text = given or default
         if not 1 <= len(text) <= 32 or not text.isprintable():
-            config_error(f"CAM{i}_LABEL must be 1 to 32 printable characters (got '{text[:40]}')")
+            config_error(f"{var} must be 1 to 32 printable characters (got '{text[:40]}')")
         if text.lower() in seen:
-            config_error(f"CAM{i}_LABEL '{text}' is already used by another camera or mode"
-                         if given else f"CAM{i}_LABEL is unset, and its default '{text}' is "
-                         f"already used by another camera; set CAM{i}_LABEL")
+            config_error(f"{var} '{text}' is already used by another camera or mode"
+                         if given else f"{var} is unset, and its default '{text}' is "
+                         f"already used by another camera or mode; set {var}")
         seen.add(text.lower())
-        label[f"camera{i}"] = text
+        label[mode] = text
+
+    for i in range(1, 5):
+        add(f"camera{i}", f"CAM{i}_LABEL", f"Camera {i}")
+    if os.environ.get("INFO_URL"):
+        add("info", "INFO_LABEL", "Dashboard")
     return label
 
 
@@ -147,6 +166,14 @@ class Config:
     def __init__(self):
         self.urls = camera_urls()
         self.label = camera_labels()
+        info = os.environ.get("INFO_URL", "")
+        self.info_url = expand_url("INFO_URL", info, ("http", "https")) if info else None
+        self.info_interval = int_in("INFO_INTERVAL", 60, 10, 3600)
+        if self.info_url:
+            try:
+                import PIL  # noqa: F401
+            except ImportError:
+                config_error("INFO_URL is set, but Pillow is missing (apt install python3-pil)")
         self.wall = os.environ.get("WALL", "") or "planes"
         if self.wall not in WALLS:
             config_error(f"WALL must be one of {', '.join(WALLS)} (got '{self.wall}')")
@@ -168,6 +195,7 @@ class Wall:
 
     def __init__(self, cfg):
         self.cfg = cfg
+        self.name = f"{cfg.wall} wall"
         self.proc = None
         self.started = 0.0
         self.warned_layout = False
@@ -222,7 +250,7 @@ class Wall:
             try:
                 self.proc.wait(STOP_GRACE)
             except subprocess.TimeoutExpired:
-                log("wall did not stop, killing it")
+                log(f"the {self.name} did not stop, killing it")
                 self._signal(signal.SIGKILL)
                 self.proc.wait()
         self._signal(signal.SIGKILL)   # leftovers in the group, e.g. ffmpeg
@@ -240,16 +268,104 @@ class Wall:
             pass
 
 
+class Info(Wall):
+    """The info mode: a child (camwalld --info) that shows INFO_URL's image on the
+    console frame buffer, which is free while the wall is stopped."""
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.name = "dashboard"
+
+    def start(self, layout=0):
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "INFO_URL": self.cfg.info_url,
+               "INFO_INTERVAL": str(self.cfg.info_interval)}
+        env.update({k: v for k, v in os.environ.items() if k.startswith("CAMWALL_FB_")})
+        self.proc = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--info"],
+                                     env=env, start_new_session=True, stdin=subprocess.DEVNULL)
+        self.started = time.monotonic()
+        log(f"started the dashboard (pid {self.proc.pid})")
+
+    def set_layout(self, layout):
+        pass
+
+
+def show_info():
+    """camwalld --info: fetch INFO_URL every INFO_INTERVAL seconds and draw it full
+    screen on the frame buffer. A failed fetch keeps the last picture."""
+    from PIL import Image, ImageMath
+    url, interval = os.environ["INFO_URL"], int(os.environ.get("INFO_INTERVAL", "60"))
+
+    def attr(name):
+        with open(os.path.join(FB_SYS, name)) as f:
+            return f.read().strip()
+    try:
+        bpp = int(attr("bits_per_pixel"))
+        w, h = map(int, attr("virtual_size").split(","))
+        stride = int(attr("stride"))
+        fb = open(FB_DEV, "wb")
+    except (OSError, ValueError) as e:
+        log(f"info: cannot use the frame buffer {FB_DEV}: {e}")
+        sys.exit(1)
+    if bpp not in (16, 32):
+        log(f"info: the frame buffer has {bpp} bits per pixel, only 16 and 32 are supported")
+        sys.exit(1)
+
+    def draw(img):
+        img = img.convert("RGB")
+        if img.size != (w, h):
+            img = img.resize((w, h))
+        if bpp == 32:
+            raw = img.tobytes("raw", "BGRX")
+        else:   # RGB565; Pillow has no packer for it, so build the 16-bit values
+            r, g, b = img.split()
+            if hasattr(ImageMath, "lambda_eval"):
+                v = ImageMath.lambda_eval(
+                    lambda a: (a["r"] >> 3 << 11) | (a["g"] >> 2 << 5) | (a["b"] >> 3), r=r, g=g, b=b)
+            else:
+                v = ImageMath.eval("((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)", r=r, g=g, b=b)
+            raw = v.convert("I;16").tobytes()
+        row = len(raw) // h
+        if row != stride:
+            raw = b"".join(raw[y * row:(y + 1) * row].ljust(stride, b"\0") for y in range(h))
+        fb.seek(0)
+        fb.write(raw)
+        fb.flush()
+
+    draw(Image.new("RGB", (w, h)))   # black until the first picture arrives
+    last, failing = None, False
+    while True:
+        try:
+            t0 = time.monotonic()
+            with urllib.request.urlopen(url, timeout=60) as r:
+                data = r.read()
+            fetched = time.monotonic() - t0
+            if data != last:
+                img = Image.open(io.BytesIO(data))
+                draw(img)
+                if last is None or failing:
+                    log(f"info: showing the dashboard ({img.width}x{img.height}, "
+                        f"{len(data) // 1024} kB, fetched in {fetched:.1f} s)")
+                last = data
+            elif failing:
+                log("info: showing the dashboard again")
+            failing = False
+        except Exception as e:   # never die over one bad fetch or image
+            if not failing:
+                log(f"info: cannot show the dashboard ({e}), keeping the last picture")
+                failing = True
+        time.sleep(interval)
+
+
 class Stop(Exception):
     pass
 
 
-def load_mode():
+def load_mode(label):
     """The mode last set over MQTT, kept across restarts in the state directory."""
     try:
         with open(os.path.join(STATE_DIR, "mode")) as f:
             mode = f.read().strip()
-        return mode if mode in MODES else MODES[0]
+        return mode if mode in label else MODES[0]
     except (OSError, TypeError):
         return MODES[0]
 
@@ -407,14 +523,14 @@ class Mqtt:
         self.publish("mode", self.label[mode])
 
     def _on_message(self, client, userdata, msg):
-        """A label in any letter case, or a mode id (cameras, camera1..camera4)."""
+        """A label in any letter case, or a mode id (cameras, camera1..camera4, info)."""
         text = msg.payload.decode(errors="replace").strip()
         mode = self.mode_of.get(text.lower())
         if mode:
             self.commands.put(mode)
         else:
             log(f"mqtt: ignoring mode '{text[:40]}' (expected one of "
-                f"{', '.join(self.label[m] for m in MODES)})")
+                f"{', '.join(self.label.values())})")
 
     def _discovery_configs(self):
         t = self.topic
@@ -426,7 +542,7 @@ class Mqtt:
             (f"select/{uid}/mode", {**common, "name": "Mode", "unique_id": f"{uid}_mode",
                                     "command_topic": f"{t}/mode/set",
                                     "state_topic": f"{t}/mode",
-                                    "options": [self.label[m] for m in MODES]}),
+                                    "options": list(self.label.values())}),
             (f"sensor/{uid}/status", {**common, "name": "Status", "unique_id": f"{uid}_status",
                                       "state_topic": f"{t}/status", "icon": "mdi:information-outline"}),
             (f"binary_sensor/{uid}/display", {**common, "name": "Display",
@@ -467,6 +583,8 @@ def print_url(arg):
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--url":
         return print_url(sys.argv[2])
+    if sys.argv[1:] == ["--info"]:
+        return show_info()
     cfg = Config()
     mqtt_cfg = mqtt_settings()
     mqtt = Mqtt(mqtt_cfg, cfg.label) if mqtt_cfg else None
@@ -496,6 +614,8 @@ def main():
         return r.returncode == 0, reason
 
     def running():
+        if mode == "info":
+            return f"{cfg.label[mode]} showing"
         n = LAYOUT[mode] if cfg.wall == "planes" else 0
         return f"{cfg.wall} wall running" + (f", {cfg.label[mode]}" if n else "")
 
@@ -505,7 +625,12 @@ def main():
             mqtt.publish("status", msg)
 
     wall = Wall(cfg)
-    mode = load_mode() if mqtt else MODES[0]   # without MQTT nothing could change a saved view
+    info = Info(cfg) if cfg.info_url else None
+    child = None          # the running wall or dashboard
+    mode = load_mode(cfg.label) if mqtt else MODES[0]   # without MQTT nothing could change a saved view
+
+    def wanted():
+        return info if mode == "info" else wall
     notify("READY=1")
     log(f"camwalld: {cfg.wall} wall, display probe "
         f"{'off' if cfg.probe is None else repr(shlex.join(cfg.probe))}, mode {mode}")
@@ -540,9 +665,10 @@ def main():
                 else:
                     fails += 1
                     if present is None or (present and fails >= cfg.fails):
-                        if wall.proc is not None:
-                            log(f"display lost ({fails} failed probes: {why}), stopping the wall")
-                            wall.stop()
+                        if child is not None:
+                            log(f"display lost ({fails} failed probes: {why}), stopping the {child.name}")
+                            child.stop()
+                            child = None
                         log(f"no display detected ({why}), idle until it returns")
                         status(f"no display, idle ({why})")
                         present = False
@@ -558,32 +684,39 @@ def main():
                 mode = new
                 save_mode(mode)
                 log(f"mode {cfg.label[mode]} (MQTT)")
-                if wall.proc is not None:        # else the wall starts in this layout later
-                    wall.set_layout(LAYOUT[mode])
+                if child is wanted():            # same child: the wall switches layout live
+                    child.set_layout(LAYOUT.get(mode, 0))
                     status(running())
+                elif child is not None:          # wall <-> dashboard: stop one, start the other
+                    child.stop()
+                    child = None
+                    restarts, restart_at = 0, 0.0
 
-            rc = wall.exited()
+            rc = child.exited() if child else None
             if rc is not None:
                 if rc == EX_CONFIG:
                     log("the wall reported a configuration error")
                     sys.exit(EX_CONFIG)
-                if wall.uptime() >= HEALTHY:
+                if child.uptime() >= HEALTHY:
                     restarts = 0
                 delay = BACKOFF[min(restarts, len(BACKOFF) - 1)]
                 restarts += 1
-                log(f"the wall exited (status {rc}), restarting in {delay}s")
-                status(f"wall exited (status {rc}), restarting in {delay}s")
-                wall.stop()   # clears leftovers in its process group
+                log(f"the {child.name} exited (status {rc}), restarting in {delay}s")
+                status(f"{child.name} exited (status {rc}), restarting in {delay}s")
+                child.stop()   # clears leftovers in its process group
+                child = None
                 restart_at = time.monotonic() + delay
 
-            if present and wall.proc is None and time.monotonic() >= restart_at:
-                wall.start(LAYOUT[mode])
+            if present and child is None and time.monotonic() >= restart_at:
+                child = wanted()
+                child.start(LAYOUT.get(mode, 0))
                 status(running())
 
             time.sleep(1)
     except Stop:
         notify("STOPPING=1")
-        wall.stop()
+        if child is not None:
+            child.stop()
         if mqtt:
             mqtt.stop()
 

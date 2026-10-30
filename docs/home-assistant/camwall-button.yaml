@@ -1,0 +1,72 @@
+# Home Assistant automation for a Zigbee2MQTT button with single, double and long
+# presses. Change the topic, select.camwall_mode and the payloads to your setup.
+#
+#   single   next camera view (Dashboard skipped)
+#   double   Dashboard
+#   long     All cameras
+#   while the dashboard shows, single or double press returns to All cameras
+alias: camwall button
+mode: queued
+triggers:
+  - trigger: mqtt
+    id: single
+    options:
+      topic: zigbee2mqtt/camwall-button/action
+      payload: single
+  - trigger: mqtt
+    id: double
+    options:
+      topic: zigbee2mqtt/camwall-button/action
+      payload: double
+  - trigger: mqtt
+    id: long
+    options:
+      topic: zigbee2mqtt/camwall-button/action
+      payload: long
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id:
+              - single
+              - double
+          - condition: state
+            entity_id: select.camwall_mode
+            state: Dashboard
+        sequence:
+          - action: select.select_option
+            target:
+              entity_id: select.camwall_mode
+            data:
+              option: All cameras
+      - conditions:
+          - condition: trigger
+            id: single
+        sequence:
+          - action: select.select_option
+            target:
+              entity_id: select.camwall_mode
+            data:
+              option: >-
+                {% set e = 'select.camwall_mode' %}
+                {% set views = state_attr(e, 'options') | reject('eq', 'Dashboard') | list %}
+                {% set cur = states(e) %}
+                {{ views[(views.index(cur) + 1) % views | length] if cur in views else views[0] }}
+      - conditions:
+          - condition: trigger
+            id: double
+        sequence:
+          - action: select.select_option
+            target:
+              entity_id: select.camwall_mode
+            data:
+              option: Dashboard
+      - conditions:
+          - condition: trigger
+            id: long
+        sequence:
+          - action: select.select_option
+            target:
+              entity_id: select.camwall_mode
+            data:
+              option: All cameras

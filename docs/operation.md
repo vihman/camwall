@@ -46,7 +46,7 @@ Topics, with the default prefix:
 
 | Topic | Direction | Payload |
 |---|---|---|
-| `camwall/mode/set` | to camwall | a mode's label, in any letter case, or its id: `All cameras` / `cameras` (the 2x2 grid), the `CAMn_LABEL`s / `camera1`..`camera4` (that camera full screen). Anything else is logged and ignored |
+| `camwall/mode/set` | to camwall | a mode's label, in any letter case, or its id: `All cameras` / `cameras` (the 2x2 grid), the `CAMn_LABEL`s / `camera1`..`camera4` (that camera full screen), `INFO_LABEL` / `info` (the [dashboard](#dashboard-info-mode), if configured). Anything else is logged and ignored |
 | `camwall/mode` | from camwall, retained | the current mode's label, e.g. `All cameras`, `Gate` |
 | `camwall/status` | from camwall, retained | the same text as the `Status:` line of `systemctl status camwall`, e.g. `planes wall running`, `planes wall running, Gate`, `no display, idle (Display not found)` |
 | `camwall/display` | from camwall, retained | `on` while a monitor is detected, `off` without one (the display probe) |
@@ -56,7 +56,7 @@ Topics, with the default prefix:
 - **There is no off mode:** the wall stops by itself while no monitor is detected ([Display presence](#display-presence)) and `display` turns `off`. The chosen view is kept, and a view chosen meanwhile is remembered; the wall comes back in it with the monitor. To stop the wall by hand, use `sudo systemctl stop camwall`.
 - **Labels:** `CAM1_LABEL`..`CAM4_LABEL` (default `Camera 1`..`Camera 4`) name the cameras for MQTT, Home Assistant and the status. They must be unique, ignoring case, at most 32 characters, and different from the other labels and ids. camwalld saves the mode by id, so renaming a camera keeps the saved mode; Home Assistant shows a new label after camwalld restarts.
 - **Switching between `cameras` and `cameraN`** does not restart the wall: all four cameras keep decoding, and the switch takes effect at the next display tick. Only the plane wall can do this; with `WALL=gstreamer` the single-camera modes show the grid, and camwalld logs that once.
-- **The mode persists:** camwalld saves it in `/var/lib/camwall/mode`, so `off` survives a restart, a reboot or a broker outage. With `MQTT=no` the saved mode is ignored and the wall always runs, since nothing could switch it back on.
+- **The mode persists:** camwalld saves it in `/var/lib/camwall/mode`, so the view survives a restart, a reboot or a broker outage. With `MQTT=no` the saved mode is ignored and the wall always runs, since nothing could switch it back on.
 - **A broker that is down never stops the wall:** camwalld logs the lost connection once and reconnects by itself (after 1 s, backing off to at most 60 s).
 
 `tools/mqtt-test.py` checks the settings step by step and stops at the first failure. The steps are the settings, the name lookup, TCP, TLS (with the certificate's subject, issuer and expiry), the MQTT login, and the retained messages on camwall's topics. `--set MODE` (for example `--set camera2`) also sends a command. It uses sudo to read the configuration and prints no password. When camwalld cannot connect, its log line names the cause too, for example `cannot connect to host:8883 (TLS certificate: IP address mismatch, ...)`.
@@ -71,6 +71,24 @@ mosquitto_pub -h <broker> -u <user> -P <password> -t camwall/mode/set -m cameras
 ### Home Assistant
 
 With the default `MQTT_DISCOVERY=homeassistant`, a device named after `MQTT_TOPIC` appears in Home Assistant's MQTT integration as soon as camwalld connects. It has a **Mode** select, whose options are the labels (`All cameras` and the four `CAMn_LABEL`s), a **Status** sensor and a **Display** binary sensor, and all show as unavailable while camwalld is offline. With the Mosquitto broker add-on, create a user for the Pi in the add-on's configuration (or as a Home Assistant user) and put it in `MQTT_USER` and `MQTT_PASSWORD`. Automations, for example a button press, call `select.select_option` on the Mode entity.
+
+### Dashboard (info mode)
+
+With `INFO_URL` set, one more mode shows an image full screen instead of the cameras, fetched again every `INFO_INTERVAL` seconds. It is meant for a Home Assistant dashboard rendered on the Home Assistant machine, so the Pi runs no browser and holds no Home Assistant token.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `INFO_URL` | (none: no info mode) | `http://` or `https://` URL whose response is the image itself (PNG, JPEG or BMP); `<NAME>` templates work. A web page is not rendered: an HTML response counts as a failed fetch, and the screen stays black or keeps the last picture |
+| `INFO_LABEL` | `Dashboard` | The mode's name in MQTT and Home Assistant, unique like the camera labels |
+| `INFO_INTERVAL` | `60` | Seconds between fetches, 10 to 3600 |
+
+- **Showing it stops the wall:** both use the display, so the camera streams stop while the dashboard shows and restart when a camera view is chosen again (a few seconds until the first picture). Without a monitor nothing is fetched.
+- **How it is drawn:** a child process (`camwalld --info`) writes the image to the console frame buffer (`/dev/fb0`), scaled to the screen if its size differs. An image that has not changed is not redrawn. A failed fetch keeps the last picture and is logged once.
+- **Two kernel options for a clean picture**, appended to the single line in `/boot/firmware/cmdline.txt` (then reboot): `video=HDMI-A-1:1920x1080-32@60` gives the frame buffer 32-bit colour (the default is 16-bit, which turns fine shades into steps), and `vt.global_cursor_default=0` hides the console's blinking cursor, which otherwise shows on top of the image. Use your monitor's connector and mode. `cat /sys/class/graphics/fb0/bits_per_pixel` should then print 32; camwalld draws either depth. Tested on the reference Pi (2026-10-30); the camera wall is not affected, since it uses its own display planes.
+- **Tuning the look** (dark theme, zoom, layout) is done in Home Assistant and in Puppet's URL options; the Pi shows whatever image it gets.
+- **The image source:** the [Puppet](https://github.com/balloob/home-assistant-addons) add-on renders a dashboard view with a headless browser on the Home Assistant machine and serves it as an image, for example `http://<home assistant>:10000/lovelace/0?viewport=1920x1080` (options such as `&dark` or `&zoom=1.5` are in its README). Give it the long-lived token of a dedicated non-admin user. Puppet's port has no authentication, so allow only the Pi to reach it (see [Security](security.md)). Any other URL that returns an image works too.
+
+An example Home Assistant automation is in [docs/home-assistant/camwall-button.yaml](home-assistant/camwall-button.yaml), for a Zigbee2MQTT button with single, double and long presses: single press steps through the camera views, double press shows the dashboard, long press shows all cameras, and while the dashboard shows, a single or double press returns to all cameras. Change the topic, entity and press names to your setup.
 
 ## Switching to the GStreamer wall
 
