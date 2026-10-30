@@ -78,7 +78,7 @@ With `INFO_URL` set, one more mode shows an image full screen instead of the cam
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `INFO_URL` | (none: no info mode) | `http://` or `https://` URL of a PNG, JPEG or BMP; `<NAME>` templates work |
+| `INFO_URL` | (none: no info mode) | `http://` or `https://` URL whose response is the image itself (PNG, JPEG or BMP); `<NAME>` templates work. A web page is not rendered: an HTML response counts as a failed fetch, and the screen stays black or keeps the last picture |
 | `INFO_LABEL` | `Dashboard` | The mode's name in MQTT and Home Assistant, unique like the camera labels |
 | `INFO_INTERVAL` | `60` | Seconds between fetches, 10 to 3600 |
 

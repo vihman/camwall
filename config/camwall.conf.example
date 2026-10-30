@@ -89,7 +89,8 @@ CAM4_URL=rtsps://192.168.1.20:8443/live
 # --- Dashboard (optional info mode) -------------------------------------------
 # An http:// or https:// image shown full screen instead of the cameras when the
 # mode is set to it over MQTT, e.g. a Home Assistant dashboard rendered by the
-# Puppet add-on. Without INFO_URL there is no info mode. <NAME> templates work.
+# Puppet add-on. The URL must return the image itself (PNG, JPEG or BMP); a web
+# page is not rendered. Without INFO_URL there is no info mode. <NAME> templates work.
 
 #INFO_URL=http://homeassistant.example.com:10000/lovelace/0?viewport=1920x1080
 # Name of the mode in MQTT and Home Assistant, unique like the camera labels

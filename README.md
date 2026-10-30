@@ -58,7 +58,7 @@ On the Pi, over SSH:
 | `CAM1_LABEL`..`CAM4_LABEL` | `Camera 1`.. | Camera names for MQTT, Home Assistant and the status |
 | `DISPLAY_PROBE` | `ddcutil ... getvcp d6` | Command that succeeds while the monitor is on; `none` disables the check |
 | `MQTT` | `no` | `yes` enables MQTT control; settings in [docs/operation.md](docs/operation.md#mqtt) |
-| `INFO_URL` | (none) | Image URL for the dashboard view; settings in [docs/operation.md](docs/operation.md#dashboard-info-mode) |
+| `INFO_URL` | (none) | URL for the dashboard view. It must return an image (PNG, JPEG or BMP), not a web page: the Pi renders no HTML. Settings in [docs/operation.md](docs/operation.md#dashboard-info-mode) |
 | `WALL` | `planes` | `gstreamer` selects the older fallback wall |
 
 ## Operation
