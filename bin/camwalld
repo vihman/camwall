@@ -303,6 +303,23 @@ class Info(Wall):
     def set_layout(self, layout):
         pass
 
+    def stop(self):
+        """Stop the child and black the frame buffer: the kernel shows it whenever
+        no wall holds the display, e.g. after a monitor power cut until the wall's
+        first frame, and it must not show an old dashboard then."""
+        if self.proc is None:
+            return
+        super().stop()
+        try:
+            with open(os.path.join(FB_SYS, "virtual_size")) as f:
+                h = int(f.read().split(",")[1])
+            with open(os.path.join(FB_SYS, "stride")) as f:
+                stride = int(f.read())
+            with open(FB_DEV, "wb") as fb:
+                fb.write(bytes(stride * h))
+        except (OSError, ValueError, IndexError) as e:
+            log(f"info: cannot clear the frame buffer {FB_DEV}: {e}")
+
 
 def show_info():
     """camwalld --info: fetch INFO_URL every INFO_INTERVAL seconds and draw it full
