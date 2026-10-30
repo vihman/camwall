@@ -10,16 +10,14 @@ Passed on 2026-10-26: about a twelfth of the CPU at the full camera rate, a dead
 
 Passed on 2026-10-26/27: camwalld runs the plane wall from boot with the monitor on or off, stops it on a monitor power cut and restarts it when power returns, is restarted by the systemd watchdog when frozen, and switches to the GStreamer fallback with `WALL=gstreamer`. One wall process ran 22.5 h through a dusk and a dawn with no restart, no leak and no false `display lost`. `install.sh` rebuilds reproducibly, and `tools/` holds the measuring scripts (`measure.sh` and `feed-info.sh` used on the Pi). Details in [docs/measurements.md](docs/measurements.md#daemon-camwalld) and [docs/operation.md](docs/operation.md).
 
+## Phase 3: Home Assistant (done)
 
+Passed on 2026-10-31. Design in [docs/design.md](docs/design.md#home-assistant-integration), use in [docs/operation.md](docs/operation.md#mqtt).
 
-## Phase 3: Home Assistant (after the wall is stable)
-
-Design in [docs/design.md](docs/design.md#home-assistant-integration).
-- [ ] Per-camera status lines (`cam1 up`/`cam1 down`) that the daemon can report as health (feeds the MQTT entity in Phase 3).
-- [ ] MQTT in the daemon (generic topics, optional TLS, HA discovery on by default; see [docs/operation.md](docs/operation.md#mqtt)). In use on the Pi over TLS with the HA Mosquitto add-on (2026-10-28). Still to check: the view surviving a restart and a monitor power cut, and a broker outage.
-- [x] Remote button: a Sonoff Zigbee button through Zigbee2MQTT and an HA automation; single press steps through the views (`select.select_next`, cycling), long press returns to All cameras (2026-10-28). Double press is free for info mode.
-- [x] Info mode: an HA dashboard as an image (Puppet add-on on HA, `INFO_URL`), drawn on the frame buffer by camwalld (built 2026-10-29; in use on the Pi with a 32-bit frame buffer and the button, 2026-10-30). A monitor power cut while it shows stops it and shows it again when power returns; while it shows, the CPU is 98.8% idle with no camera streams (2026-10-30).
-- [x] Single-camera modes `camera1`..`camera4`, switched live over the wall's stdin, and camera labels `CAM1_LABEL`..`CAM4_LABEL`: in use on the Pi from the HA select and a Zigbee button (2026-10-28).
+- MQTT in camwalld (generic topics, optional TLS, HA discovery), in use over TLS with the HA Mosquitto add-on. The view survives a restart (the dashboard too), a monitor power cut, and a view chosen while the monitor is off. A 2-minute broker outage left the wall running, logged one line, and camwalld reconnected by itself. Not tried: a camwalld restart during a broker outage.
+- Single-camera modes and camera labels, switched live from the HA select and a Zigbee button (single press next view, double press dashboard, long press all cameras).
+- Info mode: an HA dashboard rendered by the Puppet add-on, drawn on the frame buffer (32-bit), 98.8% CPU idle while it shows; it survives a monitor power cut, and the frame buffer is blacked when it stops.
+- A connectivity sensor per camera: a camera cut off at its switch port turned its tile black and its sensor disconnected, and both came back by themselves when the camera returned; with the monitor off the sensors are unavailable.
 
 ## Phase 4: Repository hygiene (any time)
 

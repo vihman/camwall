@@ -50,6 +50,8 @@ Topics, with the default prefix:
 | `camwall/mode` | from camwall, retained | the current mode's label, e.g. `All cameras`, `Gate` |
 | `camwall/status` | from camwall, retained | the same text as the `Status:` line of `systemctl status camwall`, e.g. `planes wall running`, `planes wall running, Gate`, `no display, idle (Display not found)` |
 | `camwall/display` | from camwall, retained | `on` while a monitor is detected, `off` without one (the display probe) |
+| `camwall/camera1`..`camera4` | from camwall, retained | `on` while the camera's tile shows a picture, `off` when it is black (no frame for 3 s, or none within 20 s of the wall's start). Plane wall only |
+| `camwall/wall` | from camwall, retained | `online` while the plane wall runs, `offline` otherwise (no monitor, the dashboard, a restart, `WALL=gstreamer`); the camera topics are only current while it is `online` |
 | `camwall/availability` | from camwall, retained | `online`, or `offline` (also sent by the broker as the Last Will if camwalld disappears) |
 
 - **`cameras`** shows the 2x2 grid; **`camera1`**..**`camera4`** show that one camera on the whole screen (its 1280x720 stream scaled up by the display controller, so a little softer than a tile).
@@ -70,7 +72,7 @@ mosquitto_pub -h <broker> -u <user> -P <password> -t camwall/mode/set -m cameras
 
 ### Home Assistant
 
-With the default `MQTT_DISCOVERY=homeassistant`, a device named after `MQTT_TOPIC` appears in Home Assistant's MQTT integration as soon as camwalld connects. It has a **Mode** select, whose options are the labels (`All cameras` and the four `CAMn_LABEL`s), a **Status** sensor and a **Display** binary sensor, and all show as unavailable while camwalld is offline. With the Mosquitto broker add-on, create a user for the Pi in the add-on's configuration (or as a Home Assistant user) and put it in `MQTT_USER` and `MQTT_PASSWORD`. Automations, for example a button press, call `select.select_option` on the Mode entity.
+With the default `MQTT_DISCOVERY=homeassistant`, a device named after `MQTT_TOPIC` appears in Home Assistant's MQTT integration as soon as camwalld connects. It has a **Mode** select, whose options are the labels (`All cameras` and the four `CAMn_LABEL`s), a **Status** sensor, a **Display** binary sensor, and one connectivity binary sensor per camera, named after its `CAMn_LABEL` (connected while its tile shows a picture). All show as unavailable while camwalld is offline; the camera sensors also while the plane wall is not running, since then nothing watches the cameras. With the Mosquitto broker add-on, create a user for the Pi in the add-on's configuration (or as a Home Assistant user) and put it in `MQTT_USER` and `MQTT_PASSWORD`. Automations, for example a button press, call `select.select_option` on the Mode entity.
 
 ### Dashboard (info mode)
 
@@ -83,7 +85,7 @@ With `INFO_URL` set, one more mode shows an image full screen instead of the cam
 | `INFO_INTERVAL` | `60` | Seconds between fetches, 10 to 3600 |
 
 - **Showing it stops the wall:** both use the display, so the camera streams stop while the dashboard shows and restart when a camera view is chosen again (a few seconds until the first picture). Without a monitor nothing is fetched.
-- **How it is drawn:** a child process (`camwalld --info`) writes the image to the console frame buffer (`/dev/fb0`), scaled to the screen if its size differs. An image that has not changed is not redrawn. A failed fetch keeps the last picture and is logged once.
+- **How it is drawn:** a child process (`camwalld --info`) writes the image to the console frame buffer (`/dev/fb0`), scaled to the screen if its size differs. An image that has not changed is not redrawn. A failed fetch keeps the last picture and is logged once. Stopping the dashboard blacks the frame buffer, since the kernel shows it whenever no wall holds the display (for example for a few seconds after the monitor returns, until the wall's first frame).
 - **Two kernel options for a clean picture**, appended to the single line in `/boot/firmware/cmdline.txt` (then reboot): `video=HDMI-A-1:1920x1080-32@60` gives the frame buffer 32-bit colour (the default is 16-bit, which turns fine shades into steps), and `vt.global_cursor_default=0` hides the console's blinking cursor, which otherwise shows on top of the image. Use your monitor's connector and mode. `cat /sys/class/graphics/fb0/bits_per_pixel` should then print 32; camwalld draws either depth. Tested on the reference Pi (2026-10-30); the camera wall is not affected, since it uses its own display planes.
 - **Tuning the look** (dark theme, zoom, layout) is done in Home Assistant and in Puppet's URL options; the Pi shows whatever image it gets.
 - **The image source:** the [Puppet](https://github.com/balloob/home-assistant-addons) add-on renders a dashboard view with a headless browser on the Home Assistant machine and serves it as an image, for example `http://<home assistant>:10000/lovelace/0?viewport=1920x1080` (options such as `&dark` or `&zoom=1.5` are in its README). Give it the long-lived token of a dedicated non-admin user. Puppet's port has no authentication, so allow only the Pi to reach it (see [Security](security.md)). Any other URL that returns an image works too.

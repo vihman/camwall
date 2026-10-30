@@ -13,6 +13,7 @@ planes/camwall-planes
 planes/*.o
 planes/soak.sh
 *.log
+__pycache__/
 
 # Backups and editor leftovers
 *.bak
