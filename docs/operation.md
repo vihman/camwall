@@ -86,10 +86,7 @@ With `INFO_URL` set, one more mode shows an image full screen instead of the cam
 - **How it is drawn:** a child process (`camwalld --info`) writes the image to the console frame buffer (`/dev/fb0`), scaled to the screen if its size differs. The frame buffer has 16-bit colour on the Pi 4, so gradients show steps. An image that has not changed is not redrawn. A failed fetch keeps the last picture and is logged once.
 - **The image source:** the [Puppet](https://github.com/balloob/home-assistant-addons) add-on renders a dashboard view with a headless browser on the Home Assistant machine and serves it as an image, for example `http://<home assistant>:10000/lovelace/0?viewport=1920x1080` (options such as `&dark` or `&zoom=1.5` are in its README). Give it the long-lived token of a dedicated non-admin user. Puppet's port has no authentication, so allow only the Pi to reach it (see [Security](security.md)). Any other URL that returns an image works too.
 
-Example Home Assistant files, in [docs/home-assistant/](home-assistant/):
-
-- [camwall-button.yaml](home-assistant/camwall-button.yaml): an automation for a button with single, double and long presses (for example a Sonoff Zigbee button through Zigbee2MQTT). Double press shows the dashboard, single press steps through the camera views, long press shows all cameras, and while the dashboard shows, any press returns to the view before it. Adapt the button's entity and press names as described in the file. Not yet tested on the reference system.
-- [camwall-previous.yaml](home-assistant/camwall-previous.yaml): the `input_text` helper that holds the view before the dashboard.
+An example Home Assistant automation is in [docs/home-assistant/camwall-button.yaml](home-assistant/camwall-button.yaml), for a Zigbee2MQTT button with single, double and long presses: single press steps through the camera views, double press shows the dashboard, long press shows all cameras, and while the dashboard shows, a single or double press returns to all cameras. Change the topic, entity and press names to your setup.
 
 ## Switching to the GStreamer wall
 

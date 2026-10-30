@@ -30,7 +30,7 @@ config/camwall.conf.example    template for /etc/camwall/camwall.conf (secrets l
 install.sh                     installs or updates everything, safe to re-run
 tools/                         measure.sh, check-hwdec.sh, feed-info.sh, mqtt-test.py
 docs/                          the documentation
-docs/home-assistant/           example Home Assistant automation and helper
+docs/home-assistant/           example Home Assistant automation
 ```
 
 ## The plane wall
